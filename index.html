@@ -1,0 +1,1809 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoboArm IPN — Control 5-GDL</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=DM+Sans:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<style>
+/* ══════════════════════════════════════════════════════
+   PALETA IPN V4 — INSTITUCIONAL REFINADA
+   Base: crema muy suave. Guinda como único acento vivo.
+   Tipografía: Playfair Display + DM Sans + IBM Plex Mono
+══════════════════════════════════════════════════════ */
+:root {
+  --g:       #6E0F1E;   /* guinda IPN */
+  --g-deep:  #490A14;
+  --g-mid:   #8C1428;
+  --g-pale:  #F7ECED;
+  --g-line:  #C9949C;
+  --g-tint:  #EDD8DB;
+
+  --bg:      #EDE7DD;
+  --bg2:     #E3DDD3;
+  --surface: #F5F1EB;
+  --surf2:   #EEEAD3;   /* slightly warm */
+  --brd:     #CFC8BC;
+  --brd2:    #B5ADA0;
+
+  --ink:     #1A1410;
+  --ink2:    #3E342A;
+  --ink3:    #7A6E64;
+  --ink4:    #A8A098;
+
+  --ok:      #256938;
+  --warn:    #7A5210;
+  --err:     #8C1A18;
+
+  --f-display: 'Playfair Display', Georgia, serif;
+  --f-body:    'DM Sans', system-ui, sans-serif;
+  --f-mono:    'IBM Plex Mono', monospace;
+}
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box }
+html, body { height:100%; background:var(--bg); color:var(--ink); font-family:var(--f-body) }
+
+/* ══ LAYOUT ══════════════════════════════════════════ */
+#app {
+  display: grid;
+  grid-template-rows: 54px 1fr 30px;
+  grid-template-columns: 1fr 388px;
+  height: 100vh;
+}
+header  { grid-column:1/-1; display:flex; align-items:center; padding:0 22px; gap:14px;
+  background:var(--g-deep); border-bottom:2px solid var(--g) }
+#vp     { position:relative; overflow:hidden;
+  background:radial-gradient(ellipse 80% 65% at 48% 40%, #F5EFE6 0%, #E8DFD2 55%, #D8CEBE 100%) }
+aside   { background:var(--surface); border-left:1px solid var(--brd); display:flex; flex-direction:column; overflow:hidden }
+footer  { grid-column:1/-1; background:var(--g-deep); border-top:1px solid var(--g);
+  display:flex; align-items:center; padding:0 16px; gap:18px }
+
+/* ══ HEADER ══════════════════════════════════════════ */
+.crest {
+  width:36px; height:40px; flex-shrink:0;
+  background:linear-gradient(150deg,#8C1428 0%,#490A14 100%);
+  clip-path:polygon(50% 0%,100% 20%,100% 80%,50% 100%,0% 80%,0% 20%);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--f-mono); font-size:8px; font-weight:500; color:#EDE7DD; letter-spacing:.6px;
+}
+.hdr-brand { flex:1 }
+.hdr-title {
+  font-family:var(--f-display); font-weight:600; font-size:15px;
+  color:#F0EAE2; letter-spacing:.3px;
+}
+.hdr-sub {
+  font-family:var(--f-mono); font-size:8.5px; color:#C0A8AD;
+  letter-spacing:2px; margin-top:2px; font-weight:300;
+}
+.hdr-sep { width:1px; height:30px; background:#490A14 }
+.hdr-keys {
+  font-family:var(--f-mono); font-size:8.5px; color:#C0A8AD;
+  background:#38090F44; border:1px solid #6E0F1E55; padding:4px 10px; letter-spacing:.5px;
+}
+.hdr-keys b { color:#EDE7DD }
+.chips { display:flex; gap:7px }
+.chip {
+  display:flex; align-items:center; gap:5px; padding:3px 9px;
+  border:1px solid #49091488; font-family:var(--f-mono); font-size:8.5px;
+  color:#A89098; letter-spacing:1px; transition:all .25s;
+}
+.chip .dot { width:6px; height:6px; border-radius:50%; background:#490A14; transition:all .25s }
+.chip.on .dot { background:#6FBA8A; box-shadow:0 0 6px #6FBA8A }
+.chip.on      { color:#A0CCA8; border-color:#2A5C3A }
+.chip.warn .dot { background:#C8A050; box-shadow:0 0 5px #C8A050 }
+.chip.warn    { color:#C8A050; border-color:#6A5020 }
+
+/* ══ VIEWPORT ════════════════════════════════════════ */
+#three-canvas { display:block; width:100%; height:100% }
+
+#hud {
+  position:absolute; top:14px; left:14px; pointer-events:none;
+  background:#FDFAF6EE; backdrop-filter:blur(6px);
+  border:1px solid var(--brd); border-left:3px solid var(--g);
+  padding:10px 14px; min-width:134px;
+  box-shadow:0 2px 12px #00000014;
+}
+.hrow {
+  display:flex; justify-content:space-between; gap:18px; align-items:baseline;
+  font-family:var(--f-mono); font-size:9.5px; color:var(--ink3); line-height:2.1;
+}
+.hrow .hv { font-size:13px; font-weight:500; color:var(--g); min-width:42px; text-align:right }
+
+#kguide {
+  position:absolute; top:14px; right:14px; display:none;
+  background:#FDFAF6EE; backdrop-filter:blur(6px);
+  border:1px solid var(--brd); padding:9px 13px;
+  font-family:var(--f-mono); font-size:8.5px; color:var(--ink3); line-height:2.1;
+  box-shadow:0 2px 12px #00000014;
+}
+#kguide .k {
+  background:var(--bg2); border:1px solid var(--brd); color:var(--g-mid);
+  padding:1px 5px; font-size:8px;
+}
+
+/* ── Webcam overlay ───────────────────────────────── */
+#cam-overlay {
+  position:absolute; bottom:12px; left:14px; width:280px;
+  display:none; flex-direction:column;
+  background:#FEFAF5F2; backdrop-filter:blur(8px);
+  border:1px solid var(--brd); border-top:2px solid var(--g);
+  box-shadow:0 4px 20px #00000018;
+}
+#cam-hdr {
+  padding:5px 10px; background:var(--g-pale);
+  display:flex; justify-content:space-between; align-items:center;
+  font-family:var(--f-mono); font-size:8.5px; color:var(--g); letter-spacing:1.5px;
+  border-bottom:1px solid var(--brd);
+}
+.cam-fps { color:var(--g-mid); font-weight:500 }
+#cam-wrap { position:relative; height:160px; overflow:hidden }
+#cam-video  { width:100%; height:100%; object-fit:cover; display:block }
+#cam-canvas { position:absolute; inset:0; width:100%; height:100% }
+/* Camera toolbar */
+#cam-toolbar {
+  display:flex; gap:4px; padding:5px 8px; background:var(--surface);
+  border-bottom:1px solid var(--brd); flex-wrap:wrap;
+}
+.ctool {
+  padding:3px 7px; font-family:var(--f-mono); font-size:7.5px; cursor:pointer;
+  border:1px solid var(--brd); background:var(--surface); color:var(--ink3);
+  letter-spacing:.8px; transition:all .15s;
+}
+.ctool:hover { border-color:var(--g); color:var(--g) }
+.ctool.active { background:var(--g); color:#F5ECEE; border-color:var(--g-deep) }
+
+.cam-conf   { height:4px; background:var(--brd) }
+.cam-conf .fill { height:100%; background:linear-gradient(90deg,var(--g),var(--g-mid)); transition:width .18s; width:0 }
+/* Extended stats panel */
+#cam-stats-panel {
+  border-top:1px solid var(--brd); background:var(--surface);
+}
+.cam-stats-row {
+  display:grid; grid-template-columns:repeat(4,1fr); padding:4px 8px; gap:2px;
+  border-bottom:1px solid var(--bg2);
+}
+.cam-stats-row2 {
+  display:grid; grid-template-columns:repeat(3,1fr); padding:4px 8px; gap:2px;
+}
+.cs { font-family:var(--f-mono); font-size:7.5px; color:var(--ink4); line-height:1.5 }
+.cs span { color:var(--g); font-weight:500; display:block; font-size:9px }
+/* Pose map mini canvas */
+#pose-map-wrap {
+  padding:5px 8px; background:var(--bg2); border-top:1px solid var(--brd);
+}
+#pose-map-label {
+  font-family:var(--f-mono); font-size:7.5px; color:var(--ink4); letter-spacing:1px; margin-bottom:3px;
+  display:flex; justify-content:space-between;
+}
+#pose-map { display:block; width:100%; height:80px }
+
+#logbox {
+  position:absolute; bottom:12px; right:14px;
+  width:236px; max-height:86px; overflow-y:auto;
+  background:#FDFAF6EE; backdrop-filter:blur(4px);
+  border:1px solid var(--brd); border-left:2px solid var(--g-line);
+  padding:5px 7px; box-shadow:0 2px 12px #00000014;
+}
+.ll { font-family:var(--f-mono); font-size:8.5px; line-height:1.7; color:var(--ink4) }
+.ll.ok   { color:var(--ok) } .ll.err  { color:var(--err) }
+.ll.info { color:#4A7AAA } .ll.tx   { color:var(--g-mid) }
+
+/* ══ SIDEBAR ══════════════════════════════════════════ */
+.tabrow {
+  display:flex; border-bottom:1px solid var(--brd);
+  background:var(--bg2); flex-shrink:0;
+}
+.tab {
+  flex:1; padding:10px 2px; text-align:center;
+  font-family:var(--f-mono); font-size:8.5px; color:var(--ink4);
+  cursor:pointer; letter-spacing:1.5px;
+  border-bottom:2px solid transparent; transition:all .18s; user-select:none;
+}
+.tab:hover { color:var(--ink3) }
+.tab.active { color:var(--g); border-bottom-color:var(--g); background:var(--surface) }
+
+.pane { display:none; flex:1; overflow-y:auto; flex-direction:column; gap:11px; padding:14px }
+.pane.active { display:flex }
+::-webkit-scrollbar { width:3px }
+::-webkit-scrollbar-track { background:var(--bg) }
+::-webkit-scrollbar-thumb { background:var(--brd2) }
+
+.sec {
+  font-family:var(--f-display); font-style:italic; font-size:12px;
+  color:var(--g); border-bottom:1px solid var(--g-line);
+  padding-bottom:3px; letter-spacing:.2px;
+}
+
+/* Joint sliders */
+.jb {
+  background:var(--surface); border:1px solid var(--brd);
+  border-left:3px solid var(--brd2); padding:9px 11px;
+  transition:border-left-color .2s, box-shadow .2s;
+}
+.jb.kb { border-left-color:var(--g); box-shadow:0 0 0 1px var(--g-tint) }
+.jr { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px }
+.jn { font-family:var(--f-body); font-weight:500; font-size:11.5px; color:var(--ink2) }
+.jk { font-family:var(--f-mono); font-size:8px; color:var(--ink4);
+  background:var(--bg2); padding:1px 5px; border:1px solid var(--brd) }
+.jv { font-family:var(--f-mono); font-size:15px; font-weight:500; color:var(--g);
+  min-width:42px; text-align:right }
+input[type=range] {
+  width: 100%;
+  appearance: none;           /* estándar */
+  -webkit-appearance: none;   /* Chrome/Safari */
+  height: 3px;
+  background: var(--brd2);
+  outline: none;
+  border-radius: 2px;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+  background:var(--g); cursor:pointer; border:2px solid var(--surface);
+  box-shadow:0 1px 5px #6E0F1E44; transition:box-shadow .15s;
+}
+input[type=range]::-webkit-slider-thumb:hover { box-shadow:0 1px 10px #6E0F1E88 }
+.jlim { display:flex; justify-content:space-between; font-family:var(--f-mono);
+  font-size:7.5px; color:var(--ink4); margin-top:3px }
+
+/* Buttons */
+.btn {
+  padding:7px 13px; border:1px solid var(--brd2); background:var(--surface);
+  color:var(--ink3); font-family:var(--f-mono); font-size:8.5px; cursor:pointer;
+  letter-spacing:1px; transition:all .15s;
+}
+.btn:hover { border-color:var(--g); color:var(--g) }
+.btn.p { background:var(--g); color:#F5ECEE; border-color:var(--g-deep); font-weight:500 }
+.btn.p:hover { background:var(--g-mid) }
+.btn.gh { border-color:var(--g-line); color:var(--g) }
+.btn.gh:hover { background:var(--g-pale) }
+.btn.d { border-color:#B04040; color:#8C2020 }
+.btn.d:hover { background:#FFF0F0 }
+.btn.f { width:100% }
+.br { display:flex; gap:6px }
+
+/* Info */
+.info {
+  background:var(--bg2); border:1px solid var(--brd);
+  border-left:3px solid var(--g-line); padding:9px 11px;
+  font-family:var(--f-mono); font-size:8.5px; color:var(--ink3); line-height:1.85;
+}
+.info .ac { color:var(--g) } .info .hl { color:var(--ink2); font-weight:500 }
+
+/* Data cells */
+.dgrid { display:grid; grid-template-columns:1fr 1fr; gap:5px }
+.dc { background:var(--bg2); border:1px solid var(--brd); padding:7px 9px }
+.dcl { font-family:var(--f-mono); font-size:7.5px; color:var(--ink4); letter-spacing:1px; margin-bottom:2px }
+.dcv { font-family:var(--f-mono); font-size:14px; font-weight:500; color:var(--g) }
+
+/* Inputs */
+.inp { background:var(--surface); border:1px solid var(--brd); color:var(--ink);
+  font-family:var(--f-mono); font-size:10px; padding:5px 8px; outline:none; width:100% }
+.inp:focus { border-color:var(--g) }
+.inp-n { background:var(--surface); border:1px solid var(--brd); color:var(--g);
+  font-family:var(--f-mono); font-size:11px; font-weight:500;
+  padding:4px 6px; outline:none; text-align:right; width:100% }
+.inp-n:focus { border-color:var(--g) }
+select.sel { background:var(--surface); border:1px solid var(--brd); color:var(--ink);
+  font-family:var(--f-mono); font-size:9px; padding:5px 8px; outline:none; cursor:pointer }
+.sel:focus { border-color:var(--g) }
+
+/* Calib */
+.cb { background:var(--surface); border:1px solid var(--brd); padding:9px 11px; margin-bottom:5px }
+.cbn { font-family:var(--f-mono); font-size:9px; font-weight:500; color:var(--g); letter-spacing:1.5px; margin-bottom:7px }
+.cgr { display:grid; grid-template-columns:38px 1fr 28px; align-items:center; gap:6px; margin-bottom:4px }
+.clb { font-family:var(--f-mono); font-size:8px; color:var(--ink4) }
+.cu  { font-family:var(--f-mono); font-size:8px; color:var(--ink4) }
+
+/* Serial log */
+#slog { background:#0E0810; border:1px solid #28101C; padding:7px;
+  height:118px; overflow-y:auto; font-family:var(--f-mono); font-size:8.5px; line-height:1.7 }
+.s-tx { color:#C89098 } .s-rx { color:#6FBA8A }
+.s-er { color:#D07880 } .s-sy { color:#8AAAC0 }
+.fwcode { background:#0A0610; border:1px solid #28101C;
+  padding:8px; font-family:var(--f-mono); font-size:8px; color:#98C890;
+  line-height:1.55; overflow:auto; max-height:200px; white-space:pre }
+
+.srow { display:grid; grid-template-columns:56px 1fr 38px; align-items:center; gap:8px; padding:2px 0 }
+.sl { font-family:var(--f-mono); font-size:8px; color:var(--ink4) }
+
+/* Footer */
+.ft { font-family:var(--f-mono); font-size:8.5px; color:#C0A8B0; letter-spacing:.8px }
+.ft.d { color:#A09098 }
+#ft-ang { margin-left:auto; font-family:var(--f-mono); font-size:8.5px; color:#D8B8C0 }
+
+/* Modal */
+#modalbg { display:none; position:fixed; inset:0; background:#00000077; z-index:200;
+  align-items:center; justify-content:center }
+#modalbg.show { display:flex }
+.modal { background:var(--surface); border:1px solid var(--brd); border-top:3px solid var(--g);
+  max-width:460px; width:90%; padding:22px 24px; box-shadow:0 8px 40px #00000028 }
+.modal h3 { font-family:var(--f-display); font-size:16px; color:var(--g); margin-bottom:10px }
+.modal p  { font-family:var(--f-mono); font-size:9px; color:var(--ink2);
+  line-height:1.9; margin-bottom:16px; white-space:pre-wrap }
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ══ HEADER ══════════════════════════════════════════ -->
+<header>
+  <div class="crest">IPN</div>
+  <div class="hdr-brand">
+    <div class="hdr-title">Brazo Robótico — 5 Grados de Libertad</div>
+    <div class="hdr-sub">INSTITUTO POLITÉCNICO NACIONAL · SISTEMA DE CONTROL Y VISIÓN ARTIFICIAL</div>
+  </div>
+  <div class="hdr-sep"></div>
+  <div class="hdr-keys"><b>Q/A</b> Base &ensp;<b>W/S</b> Hombro &ensp;<b>E/D</b> Codo &ensp;<b>R/F</b> Muñeca &ensp;<b>T/G</b> Pinza &ensp;<b>H</b> Guía</div>
+  <div class="chips">
+    <div class="chip" id="st-cam"><div class="dot"></div>WEBCAM</div>
+    <div class="chip" id="st-hand"><div class="dot"></div>MANOS</div>
+    <div class="chip" id="st-pose"><div class="dot"></div>POSE</div>
+    <div class="chip" id="st-serial"><div class="dot"></div>SERIAL</div>
+  </div>
+</header>
+
+<!-- ══ VIEWPORT ═══════════════════════════════════════ -->
+<div id="vp">
+  <canvas id="three-canvas"></canvas>
+
+  <div id="hud">
+    <div class="hrow"><span>Base</span>   <span class="hv" id="h-base">0°</span></div>
+    <div class="hrow"><span>Hombro</span> <span class="hv" id="h-sho">75°</span></div>
+    <div class="hrow"><span>Codo</span>   <span class="hv" id="h-elb">40°</span></div>
+    <div class="hrow"><span>Muñeca</span> <span class="hv" id="h-wri">0°</span></div>
+    <div class="hrow"><span>Pinza</span>  <span class="hv" id="h-grip">5°</span></div>
+  </div>
+
+  <div id="kguide">
+    <span class="k">Q / A</span> Base &nbsp;&nbsp; <span class="k">W / S</span> Hombro<br>
+    <span class="k">E / D</span> Codo &nbsp;&nbsp; <span class="k">R / F</span> Muñeca<br>
+    <span class="k">T / G</span> Pinza &nbsp;&nbsp; <span class="k">0</span> Reset<br>
+    <span class="k">H</span> Ocultar &ensp; Arrastrar = orbitar
+  </div>
+
+  <div id="cam-overlay">
+    <div id="cam-hdr">
+      <span>SEGUIMIENTO CORPORAL</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="cam-mode-lbl" style="color:var(--ink4);font-size:7.5px">POSE+MANO</span>
+        <span class="cam-fps" id="cam-fps">— fps</span>
+      </div>
+    </div>
+    <div id="cam-wrap">
+      <video id="cam-video" autoplay muted playsinline></video>
+      <canvas id="cam-canvas"></canvas>
+    </div>
+    <div id="cam-toolbar">
+      <button class="ctool active" id="ct-skeleton" title="Esqueleto completo">ESQUEL</button>
+      <button class="ctool active" id="ct-angles"   title="Ángulos">ÁNGULOS</button>
+      <button class="ctool active" id="ct-hand"     title="Mano detalle">MANO</button>
+      <button class="ctool"        id="ct-labels"   title="Etiquetas landmarks">LBLS</button>
+      <button class="ctool"        id="ct-trail"    title="Rastro de movimiento">RASTRO</button>
+      <button class="ctool"        id="ct-depth"    title="Profundidad Z">PROF-Z</button>
+    </div>
+    <div class="cam-conf"><div class="fill" id="conf-bar"></div></div>
+    <div id="cam-stats-panel">
+      <div class="cam-stats-row">
+        <div class="cs">CONF<span id="cd-conf">—</span></div>
+        <div class="cs">CODO<span id="cd-elb">—</span></div>
+        <div class="cs">MUÑECA<span id="cd-wri">—</span></div>
+        <div class="cs">PINZA<span id="cd-grip">—</span></div>
+      </div>
+      <div class="cam-stats-row2">
+        <div class="cs">BASE<span id="cd-base">—</span></div>
+        <div class="cs">HOMBRO<span id="cd-sho">—</span></div>
+        <div class="cs">VEL<span id="cd-vel">— °/s</span></div>
+      </div>
+    </div>
+    <div id="pose-map-wrap">
+      <div id="pose-map-label">
+        <span>MAPA ESQUELÉTICO</span>
+        <span id="pm-status" style="color:var(--ok)">—</span>
+      </div>
+      <canvas id="pose-map"></canvas>
+    </div>
+  </div>
+
+  <div id="logbox"></div>
+</div>
+
+<!-- ══ SIDEBAR ════════════════════════════════════════ -->
+<aside>
+  <div class="tabrow">
+    <div class="tab active" data-t="manual">MANUAL</div>
+    <div class="tab" data-t="vision">VISIÓN</div>
+    <div class="tab" data-t="calib">CALIB</div>
+    <div class="tab" data-t="arduino">ARDUINO</div>
+  </div>
+
+  <!-- MANUAL -->
+  <div class="pane active" id="pane-manual">
+    <div class="sec">Control de Articulaciones</div>
+    <div class="jb" id="jb-base">
+      <div class="jr"><span class="jn">Base — Rotación horizontal</span><span class="jk">Q / A</span><span class="jv" id="lv-base">0°</span></div>
+      <input type="range" id="sl-base" min="-180" max="180" value="0" step="1">
+      <div class="jlim"><span id="lm-base-min">−180°</span><span id="lm-base-max">180°</span></div>
+    </div>
+    <div class="jb" id="jb-sho">
+      <div class="jr"><span class="jn">Hombro — Elevación</span><span class="jk">W / S</span><span class="jv" id="lv-sho">75°</span></div>
+      <input type="range" id="sl-sho" min="0" max="180" value="90" step="1">
+      <div class="jlim"><span id="lm-sho-min">0°</span><span id="lm-sho-max">180°</span></div>
+    </div>
+    <div class="jb" id="jb-elb">
+      <div class="jr"><span class="jn">Codo — Flexión</span><span class="jk">E / D</span><span class="jv" id="lv-elb">40°</span></div>
+      <input type="range" id="sl-elb" min="0" max="135" value="20" step="1">
+      <div class="jlim"><span id="lm-elb-min">0°</span><span id="lm-elb-max">135°</span></div>
+    </div>
+    <div class="jb" id="jb-wri">
+      <div class="jr"><span class="jn">Muñeca — Rotación</span><span class="jk">R / F</span><span class="jv" id="lv-wri">0°</span></div>
+      <input type="range" id="sl-wri" min="-90" max="90" value="0" step="1">
+      <div class="jlim"><span id="lm-wri-min">−90°</span><span id="lm-wri-max">90°</span></div>
+    </div>
+    <div class="jb" id="jb-grip">
+      <div class="jr"><span class="jn">Pinza — Apertura</span><span class="jk">T / G</span><span class="jv" id="lv-grip">5°</span></div>
+      <input type="range" id="sl-grip" min="0" max="90" value="5" step="1">
+      <div class="jlim"><span id="lm-grip-min">0°</span><span id="lm-grip-max">90°</span></div>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-reset">Restablecer (0°)</button>
+      <button class="btn p" id="btn-home">HOME</button>
+    </div>
+    <div class="info">
+      <span class="hl">Modo manual activo.</span> Usa los sliders o el teclado para controlar cada articulación. Arrastra en el visor 3D para orbitar. Rueda del ratón = zoom.
+    </div>
+  </div>
+
+  <!-- VISIÓN -->
+  <div class="pane" id="pane-vision">
+    <div class="sec">Seguimiento por Cámara</div>
+    <div class="info">
+      <span class="ac">MODO BRAZO VERTICAL → ROBOT HORIZONTAL</span><br>
+      Levanta tu brazo derecho <span class="hl">hacia arriba</span> para extender el robot horizontalmente. El <span class="hl">codo doblado</span> dobla el codo del robot. Mueve tu muñeca <span class="hl">izquierda/derecha</span> para girar la base. Abre y cierra la mano para controlar la <span class="hl">pinza</span> — todos los dedos son detectados.</div>
+    <div class="br">
+      <button class="btn p f" id="btn-cam-start">▶ Iniciar webcam</button>
+      <button class="btn d" id="btn-cam-stop" style="display:none">■ Detener</button>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-mirror" disabled style="opacity:.4">⇔ Espejo</button>
+      <button class="btn f" id="btn-calib-n" disabled style="opacity:.4">⊙ Fijar neutral</button>
+    </div>
+    <div class="sec">Lecturas en tiempo real</div>
+    <div class="dgrid">
+      <div class="dc"><div class="dcl">CONFIANZA</div><div class="dcv" id="p-conf">—</div></div>
+      <div class="dc"><div class="dcl">DIST. PINZA</div><div class="dcv" id="p-grip">—</div></div>
+      <div class="dc"><div class="dcl">ÁNG. CODO</div><div class="dcv" id="p-elb">—</div></div>
+      <div class="dc"><div class="dcl">ÁNG. MUÑECA</div><div class="dcv" id="p-wri">—</div></div>
+      <div class="dc"><div class="dcl">ELEV. HOMBRO</div><div class="dcv" id="p-shy">—</div></div>
+      <div class="dc"><div class="dcl">ROT. BASE</div><div class="dcv" id="p-shx">—</div></div>
+    </div>
+    <div class="sec">Filtrado de señal</div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Suavizado EMA (α)</span><span class="jv" id="lv-smooth">0.93</span></div>
+      <input type="range" id="sl-smooth" min="0.30" max="0.97" value="0.93" step="0.01">
+      <div class="jlim"><span>Reactivo</span><span>Muy suave</span></div>
+    </div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Banda muerta (°)</span><span class="jv" id="lv-dead">2.5</span></div>
+      <input type="range" id="sl-dead" min="0" max="8" value="2.5" step="0.5">
+      <div class="jlim"><span>Sin filtro</span><span>8°</span></div>
+    </div>
+    <div class="sec">Sensibilidad por articulación</div>
+    <div class="srow"><span class="sl">Base</span>  <input type="range" id="se-base" min="0.1" max="2.0" value="0.55" step="0.05"> <span class="jv" id="sv-base" style="font-size:11px">0.55×</span></div>
+    <div class="srow"><span class="sl">Hombro</span><input type="range" id="se-sho"  min="0.1" max="2.0" value="0.65" step="0.05"><span class="jv" id="sv-sho"  style="font-size:11px">0.65×</span></div>
+    <div class="srow"><span class="sl">Codo</span>  <input type="range" id="se-elb"  min="0.1" max="2.0" value="0.75" step="0.05">  <span class="jv" id="sv-elb"  style="font-size:11px">0.75×</span></div>
+    <div class="srow"><span class="sl">Pinza</span> <input type="range" id="se-grip" min="0.2" max="3.0" value="0.90" step="0.05"> <span class="jv" id="sv-grip" style="font-size:11px">0.90×</span></div>
+  </div>
+
+  <!-- CALIB -->
+  <div class="pane" id="pane-calib">
+    <div class="sec">Límites Físicos del Robot</div>
+    <div class="info">Define los ángulos máximos del hardware para <span class="ac">proteger los servomotores</span>. Los controles y la visión quedan restringidos a estos valores.</div>
+    <div id="calib-wrap"></div>
+    <div class="sec">Operaciones</div>
+    <div class="br">
+      <button class="btn p f" id="btn-save-cal">Guardar calibración</button>
+      <button class="btn gh" id="btn-load-cal">Cargar</button>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-go-min">◀ Ir a mínimos</button>
+      <button class="btn f" id="btn-go-max">Ir a máximos ▶</button>
+    </div>
+    <button class="btn f" id="btn-reset-cal" style="margin-top:2px">Restaurar valores por defecto</button>
+  </div>
+
+  <!-- ARDUINO -->
+  <div class="pane" id="pane-arduino">
+    <div class="sec">Conexión Serial (Web Serial API)</div>
+    <div class="br">
+      <select class="sel" id="sel-baud" style="flex:1">
+        <option value="9600">9 600 baud</option>
+        <option value="57600">57 600 baud</option>
+        <option value="115200" selected>115 200 baud</option>
+      </select>
+      <button class="btn p" id="btn-conn" style="min-width:96px">⚡ Conectar</button>
+    </div>
+    <div class="info">
+      <span class="ac">Puerto:</span> <span id="port-name">—</span><br>
+      <span class="ac">Estado:</span> <span id="serial-txt">Desconectado</span><br>
+      <span class="ac">TX:</span> <span class="hl">B:90,H:45,C:60,W:0,G:30\n</span><br>
+      <span class="ac">RX:</span> <span class="hl">OK B:90 H:45 ... / PONG</span>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-home-ser" disabled style="opacity:.4">↺ Enviar HOME</button>
+      <button class="btn f" id="btn-ping"     disabled style="opacity:.4">⚡ PING</button>
+    </div>
+    <div class="sec">Frecuencia de transmisión</div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Frecuencia</span><span class="jv" id="lv-hz">20 Hz</span></div>
+      <input type="range" id="sl-hz" min="1" max="50" value="20" step="1">
+      <div class="jlim"><span>1 Hz</span><span>50 Hz</span></div>
+    </div>
+    <div class="sec">Consola serial</div>
+    <div id="slog"></div>
+    <div class="br" style="margin-top:4px">
+      <input type="text" class="inp" id="inp-cmd" placeholder="B:90,H:45,C:45,W:0,G:0" style="flex:1">
+      <button class="btn gh" id="btn-send-raw">TX</button>
+      <button class="btn" id="btn-clr">CLR</button>
+    </div>
+    <div class="sec">Firmware Arduino v2.1</div>
+    <div class="fwcode" id="fw"></div>
+    <button class="btn gh f" id="btn-copy-fw" style="margin-top:4px">Copiar firmware al portapapeles</button>
+    <div class="info" style="margin-top:4px">
+      <span class="hl">Pines:</span> Base=<span class="ac">3</span> Hombro=<span class="ac">5</span> Codo=<span class="ac">6</span> Muñeca=<span class="ac">9</span> Pinza=<span class="ac">10</span><br>
+      Requiere <span class="ac">Chrome / Edge ≥ 89</span> sobre HTTPS o localhost.
+    </div>
+  </div>
+</aside>
+
+<!-- FOOTER -->
+<footer>
+  <span class="ft">RoboArm IPN v4.0</span>
+  <span class="ft d" id="ft-mode">Modo: Manual</span>
+  <span class="ft d" id="ft-ser">Serial: —</span>
+  <span id="ft-ang">B:0° H:75° C:40° W:0° G:5°</span>
+</footer>
+</div>
+
+<!-- MODAL -->
+<div id="modalbg">
+  <div class="modal">
+    <h3 id="modal-t">Aviso</h3>
+    <p id="modal-b"></p>
+    <button class="btn p" onclick="document.getElementById('modalbg').classList.remove('show')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ FIRMWARE -->
+<script>
+const FW = `// ════════════════════════════════════════════════════════
+//  RoboArm IPN — Firmware v2.1
+//  RX: B:90,H:45,C:60,W:0,G:30\\n
+//  TX: OK B:90 H:45 C:60 W:0 G:30\\n  |  PONG
+// ════════════════════════════════════════════════════════
+#include <Servo.h>
+#define PIN_BASE 3  #define PIN_SHOULDER 5  #define PIN_ELBOW 6
+#define PIN_WRIST 9  #define PIN_GRIPPER 10
+
+Servo sB, sH, sC, sW, sG;
+struct St { int b=90,h=45,c=45,w=90,g=0; } cur,tgt;
+String buf="";
+
+void setup(){
+  Serial.begin(115200);
+  sB.attach(PIN_BASE); sH.attach(PIN_SHOULDER); sC.attach(PIN_ELBOW);
+  sW.attach(PIN_WRIST); sG.attach(PIN_GRIPPER);
+  applyServos(cur);
+  Serial.println("READY IPN-RoboArm v2.1");
+}
+
+void loop(){
+  while(Serial.available()){
+    char c=(char)Serial.read();
+    if(c=='\\n'){ parseCmd(buf); buf=""; } else if(buf.length()<64) buf+=c;
+  }
+}
+
+void parseCmd(String cmd){
+  cmd.trim(); if(!cmd.length()) return;
+  if(cmd=="PING"){ Serial.println("PONG"); return; }
+  bool ok=true; int s=0;
+  while(s<(int)cmd.length()){
+    int cm=cmd.indexOf(',',s); if(cm<0) cm=cmd.length();
+    String t=cmd.substring(s,cm); int co=t.indexOf(':');
+    if(co>0){
+      int v=t.substring(co+1).toInt();
+      switch(t.charAt(0)){
+        case 'B': tgt.b=constrain(v,0,180); break;
+        case 'H': tgt.h=constrain(v,0,180); break;
+        case 'C': tgt.c=constrain(v,0,135); break;
+        case 'W': tgt.w=constrain(v,0,180); break;
+        case 'G': tgt.g=constrain(v,0,90);  break;
+        default: ok=false;
+      }
+    }
+    s=cm+1;
+  }
+  if(ok){
+    smoothMove(cur,tgt,6,3); cur=tgt;
+    Serial.print("OK B:"); Serial.print(cur.b);
+    Serial.print(" H:"); Serial.print(cur.h);
+    Serial.print(" C:"); Serial.print(cur.c);
+    Serial.print(" W:"); Serial.print(cur.w);
+    Serial.print(" G:"); Serial.println(cur.g);
+  }
+}
+
+void smoothMove(St &fr,St &to,int steps,int dly){
+  for(int i=1;i<=steps;i++){
+    St m;
+    m.b=fr.b+(to.b-fr.b)*i/steps; m.h=fr.h+(to.h-fr.h)*i/steps;
+    m.c=fr.c+(to.c-fr.c)*i/steps; m.w=fr.w+(to.w-fr.w)*i/steps;
+    m.g=fr.g+(to.g-fr.g)*i/steps;
+    applyServos(m); delay(dly);
+  }
+}
+void applyServos(St &s){
+  sB.write(s.b); sH.write(s.h); sC.write(s.c); sW.write(s.w); sG.write(s.g);
+}`;
+document.getElementById('fw').textContent = FW;
+</script>
+
+<!-- ══════════════════════════════════════════════════ STATE -->
+<script>
+const JDEFS = [
+  { key:'base', min:-180, max:180,  def:0,   lbl:'BASE'   },
+  { key:'sho',  min:0,    max:180,  def:90,  lbl:'HOMBRO' },
+  { key:'elb',  min:0,    max:135,  def:20,  lbl:'CODO'   },
+  { key:'wri',  min:-90,  max:90,   def:0,   lbl:'MUÑECA' },
+  { key:'grip', min:0,    max:90,   def:5,   lbl:'PINZA'  },
+];
+const J = {};
+JDEFS.forEach(d => J[d.key] = { v:d.def, calMin:d.min, calMax:d.max });
+
+const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+const toRad = d => d * Math.PI / 180;
+const lerp  = (a,b,t) => a + (b-a)*t;
+
+function setJoint(key, val){
+  J[key].v = clamp(val, J[key].calMin, J[key].calMax);
+  applyArm();
+  refreshUI();
+}
+</script>
+
+<!-- ══════════════════════════════════════════════════ THREE.JS -->
+<script>
+const c3 = document.getElementById('three-canvas');
+const vp  = document.getElementById('vp');
+
+const renderer = new THREE.WebGLRenderer({canvas:c3, antialias:true, alpha:true});
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xF0EAE0);
+scene.fog = new THREE.Fog(0xEDE5D8, 18, 32);
+
+const cam3 = new THREE.PerspectiveCamera(40, 1, 0.05, 60);
+cam3.position.set(5, 3.2, 6);
+cam3.lookAt(1.8, 1.0, 0);
+
+// ── Luces — para guinda+oro+plata ──────────────────
+scene.add(new THREE.AmbientLight(0xF0E8D8, 0.75));
+const sunL = new THREE.DirectionalLight(0xFFF8F0, 1.5);
+sunL.position.set(6, 10, 5); sunL.castShadow = true;
+sunL.shadow.mapSize.set(2048,2048);
+sunL.shadow.camera.near = 0.1; sunL.shadow.camera.far = 30;
+sunL.shadow.bias = -0.0005;
+scene.add(sunL);
+const rimL = new THREE.DirectionalLight(0xFFD890, 0.60); // luz dorada desde atrás
+rimL.position.set(4, 3, -4); scene.add(rimL);
+const fillL = new THREE.DirectionalLight(0xD0E8FF, 0.35); // luz fría para plata
+fillL.position.set(-5, 2, 2); scene.add(fillL);
+const glow = new THREE.PointLight(0x8C1428, 0.7, 10); // guinda glow
+glow.position.set(0, 3, 5); scene.add(glow);
+const goldL = new THREE.PointLight(0xC8900A, 0.5, 8); // luz dorada desde arriba
+goldL.position.set(2, 6, 1); scene.add(goldL);
+
+// ── Suelo — claro ────────────────────────────────────
+const grid = new THREE.GridHelper(16, 32, 0xC8B8A8, 0xDDD0C0);
+scene.add(grid);
+const gnd = new THREE.Mesh(new THREE.PlaneGeometry(16,16),
+  new THREE.MeshStandardMaterial({color:0xE8DDD0, roughness:0.85, metalness:0.0}));
+gnd.rotation.x = -Math.PI/2; gnd.receiveShadow = true; scene.add(gnd);
+
+// ── Materiales — GUINDA DOMINANTE + ORO + PLATA ─────
+// Guinda IPN como color principal del brazo
+// Oro: juntas, anillos, detalles calientes
+// Plata: elementos estructurales, tapas, screws
+const mBone    = new THREE.MeshStandardMaterial({color:0x7A1022, metalness:0.55, roughness:0.30,
+  emissive:0x280408, emissiveIntensity:0.10}); // GUINDA — tubos principales
+const mIvory   = new THREE.MeshStandardMaterial({color:0x8C1830, metalness:0.50, roughness:0.32,
+  emissive:0x2A0508, emissiveIntensity:0.08}); // GUINDA CLARO — dedos de pinza
+const mGold    = new THREE.MeshStandardMaterial({color:0xD4A840, metalness:0.92, roughness:0.12,
+  emissive:0x402808, emissiveIntensity:0.06}); // ORO brillante — juntas primarias
+const mGoldDk  = new THREE.MeshStandardMaterial({color:0xA87828, metalness:0.88, roughness:0.18}); // ORO oscuro
+const mSilver  = new THREE.MeshStandardMaterial({color:0xC8C4C0, metalness:0.85, roughness:0.14}); // PLATA — estructural
+const mGuinda  = new THREE.MeshStandardMaterial({color:0x6E0F1E, metalness:0.62, roughness:0.22,
+  emissive:0x300410, emissiveIntensity:0.15}); // GUINDA OSCURO — base y detalles
+const mGuindaDk= new THREE.MeshStandardMaterial({color:0x480A12, metalness:0.78, roughness:0.18}); // GUINDA PROFUNDO
+const mJoint   = new THREE.MeshStandardMaterial({color:0xD4A840, metalness:0.78, roughness:0.15,
+  emissive:0x3A2008, emissiveIntensity:0.07}); // ORO — esferas de articulación
+const mDark    = new THREE.MeshStandardMaterial({color:0x1E1818, metalness:0.88, roughness:0.14}); // NEGRO — interior
+const mServo   = new THREE.MeshStandardMaterial({color:0x2A1A1E, metalness:0.82, roughness:0.12,
+  emissive:0x100408, emissiveIntensity:0.05}); // NEGRO + guinda — servos
+const mTip     = new THREE.MeshStandardMaterial({color:0xB83048, metalness:0.45, roughness:0.38}); // GUINDA CLARO — puntas
+const mRubber  = new THREE.MeshStandardMaterial({color:0x160C0E, metalness:0.04, roughness:0.94}); // NEGRO MATE — goma
+const mAccent  = new THREE.MeshStandardMaterial({color:0xD4A840, metalness:0.90, roughness:0.14}); // ORO — anillos y acentos
+
+function mk(geo,mat,cs=true){ const m=new THREE.Mesh(geo,mat); m.castShadow=cs; m.receiveShadow=true; return m }
+function cy(rT,rB,h,s,mat){ return mk(new THREE.CylinderGeometry(rT,rB,h,s),mat) }
+function bx(w,h,d,mat){ return mk(new THREE.BoxGeometry(w,h,d),mat) }
+function sp(r,mat){ return mk(new THREE.SphereGeometry(r,20,14),mat) }
+// Torus rings for joint details
+function tor(R,r,mat){ return mk(new THREE.TorusGeometry(R,r,10,20),mat) }
+
+// ════════════════════════════════════════════════════════
+// BASE PLATFORM
+// ════════════════════════════════════════════════════════
+const basePlatformOut = cy(0.82, 0.92, 0.12, 24, mSilver);
+basePlatformOut.position.y = 0.06; scene.add(basePlatformOut);
+const basePlatformTop = cy(0.78, 0.78, 0.04, 24, mAccent);
+basePlatformTop.position.y = 0.14; scene.add(basePlatformTop);
+
+// Mounting screws (decorative)
+for(let i=0;i<6;i++){
+  const a = (i/6)*Math.PI*2;
+  const screw = cy(0.024,0.024,0.06,8,mDark);
+  screw.position.set(Math.cos(a)*0.65, 0.09, Math.sin(a)*0.65);
+  scene.add(screw);
+}
+
+// ════════════════════════════════════════════════════════
+// BASE GROUP (rotates Y = base joint)
+// ════════════════════════════════════════════════════════
+const baseG = new THREE.Group();
+baseG.position.y = 0.14; scene.add(baseG);
+
+// Housing principal
+const housing = bx(0.90, 0.84, 0.74, mBone);
+housing.position.y = 0.42; baseG.add(housing);
+// Housing beveled edges (detail strips)
+[[-0.44,0.42,0,'z'],[0.44,0.42,0,'z']].forEach(([x,y,z,ax])=>{
+  const strip = bx(0.06, 0.80, 0.70, mSilver);
+  strip.position.set(x,y,z); baseG.add(strip);
+});
+[0,.84].forEach(y=>{
+  const cap = bx(0.88,0.04,0.72,mSilver); cap.position.y=y; baseG.add(cap);
+});
+// Servo windows
+[-0.30,0.30].forEach(z=>{
+  const win = bx(0.05,0.32,0.24,mServo); win.position.set(-0.47,0.42,z); baseG.add(win);
+  const win2= bx(0.05,0.32,0.24,mServo); win2.position.set( 0.47,0.42,z); baseG.add(win2);
+});
+// Gear/pulley pair
+[-0.22,0.22].forEach(z=>{
+  const gearOuter = cy(0.20,0.20,0.06,24,mSilver); gearOuter.rotation.z=Math.PI/2; gearOuter.position.set(0.47,0.36,z); baseG.add(gearOuter);
+  const gearInner = cy(0.10,0.10,0.07,16,mDark);   gearInner.rotation.z=Math.PI/2; gearInner.position.set(0.47,0.36,z); baseG.add(gearInner);
+  const gearRing  = tor(0.17,0.025,mGuinda);         gearRing.rotation.y=Math.PI/2;  gearRing.position.set(0.47,0.36,z); baseG.add(gearRing);
+});
+// Vertical post (shoulder mount)
+const post = cy(0.16,0.18,0.30,14,mBone); post.position.set(0,0.99,0); baseG.add(post);
+const postRing = tor(0.18,0.025,mGuinda); postRing.position.set(0,0.94,0); baseG.add(postRing);
+const postCap  = cy(0.18,0.16,0.04,14,mSilver); postCap.position.set(0,1.14,0); baseG.add(postCap);
+// IPN label plate
+const plate = bx(0.30,0.12,0.04,mGuinda); plate.position.set(0,0.54,0.38); baseG.add(plate);
+
+// ════════════════════════════════════════════════════════
+// SHOULDER PIVOT
+// ════════════════════════════════════════════════════════
+const shoP = new THREE.Group(); shoP.position.set(0,1.18,0); baseG.add(shoP);
+const shoG = new THREE.Group(); shoP.add(shoG);
+
+// Shoulder joint sphere with rings
+const shoSph = sp(0.22, mJoint); shoG.add(shoSph);
+const shoRing1 = tor(0.22,0.03,mGuinda); shoG.add(shoRing1);
+const shoRing2 = tor(0.22,0.03,mGuindaDk); shoRing2.rotation.x=Math.PI/2; shoG.add(shoRing2);
+// Shoulder axle
+const shoAx = cy(0.055,0.055,0.76,10,mDark); shoAx.rotation.z=Math.PI/2; shoG.add(shoAx);
+// Axle caps
+[-0.38,0.38].forEach(x=>{ const c=cy(0.09,0.09,0.05,12,mSilver); c.rotation.z=Math.PI/2; c.position.x=x; shoG.add(c); });
+
+// ════════════════════════════════════════════════════════
+// ARM 1 — main long arm (horizontal, extends along +Z)
+// ════════════════════════════════════════════════════════
+const arm1 = new THREE.Group(); shoG.add(arm1);
+
+// Main tube — tapered bone/ivory
+const a1tube = cy(0.105,0.148,3.20,12,mBone); a1tube.rotation.x=Math.PI/2; a1tube.position.z=1.60; arm1.add(a1tube);
+// Inner dark channel
+const a1inn = cy(0.068,0.090,3.15,10,mDark); a1inn.rotation.x=Math.PI/2; a1inn.position.z=1.60; arm1.add(a1inn);
+// Mounting bracket at shoulder end
+const bk1 = bx(0.38,0.36,0.26,mBone); bk1.position.z=0.13; arm1.add(bk1);
+const bk1rim = bx(0.42,0.04,0.28,mSilver); bk1rim.position.set(0,0.18,0.13); arm1.add(bk1rim);
+const bk1bot = bx(0.42,0.04,0.28,mSilver); bk1bot.position.set(0,-0.18,0.13); arm1.add(bk1bot);
+// Cable guide rings along tube
+[0.55, 1.10, 1.65, 2.20, 2.78].forEach((z,i)=>{
+  const rg = cy(0.168,0.168,0.046,14,i%2===0?mSilver:mAccent);
+  rg.rotation.x=Math.PI/2; rg.position.z=z; arm1.add(rg);
+  const rgIn = cy(0.130,0.130,0.050,14,mDark);
+  rgIn.rotation.x=Math.PI/2; rgIn.position.z=z; arm1.add(rgIn);
+});
+// Engraved stripe detail
+const stripe1 = bx(0.02,0.26,3.12,mGuinda); stripe1.position.set(0.11,0.0,1.60); arm1.add(stripe1);
+
+// ════════════════════════════════════════════════════════
+// ELBOW PIVOT
+// ════════════════════════════════════════════════════════
+const elbP = new THREE.Group(); elbP.position.z=3.20; arm1.add(elbP);
+const elbG = new THREE.Group(); elbP.add(elbG);
+
+// Elbow housing
+const eHs = bx(0.34,0.34,0.26,mBone); elbG.add(eHs);
+const eHsT= bx(0.36,0.04,0.28,mSilver); eHsT.position.y=0.17; elbG.add(eHsT);
+const eHsB= bx(0.36,0.04,0.28,mSilver); eHsB.position.y=-0.17; elbG.add(eHsB);
+// Elbow joint sphere
+const eSph = sp(0.19,mJoint); elbG.add(eSph);
+const eRing= tor(0.19,0.028,mGuinda); elbG.add(eRing);
+const eAx  = cy(0.048,0.048,0.54,10,mDark); eAx.rotation.z=Math.PI/2; elbG.add(eAx);
+[-0.28,0.28].forEach(x=>{ const c=cy(0.086,0.086,0.04,12,mSilver); c.rotation.z=Math.PI/2; c.position.x=x; elbG.add(c); });
+// Elbow pulley
+const ePul = cy(0.14,0.14,0.07,18,mSilver); ePul.rotation.x=Math.PI/2; ePul.position.z=0.20; elbG.add(ePul);
+const ePRim= tor(0.14,0.022,mGuinda); ePRim.rotation.x=Math.PI/2; ePRim.position.z=0.20; elbG.add(ePRim);
+
+// ════════════════════════════════════════════════════════
+// ARM 2 — forearm
+// ════════════════════════════════════════════════════════
+const arm2 = new THREE.Group(); elbG.add(arm2);
+
+const a2tube = cy(0.090,0.108,1.58,12,mBone); a2tube.rotation.x=Math.PI/2; a2tube.position.z=0.79; arm2.add(a2tube);
+const a2inn  = cy(0.055,0.070,1.54,10,mDark); a2inn.rotation.x=Math.PI/2; a2inn.position.z=0.79; arm2.add(a2inn);
+// Mounting bracket
+const bk2 = bx(0.28,0.28,0.20,mBone); bk2.position.z=0.10; arm2.add(bk2);
+[0.28,0.72,1.14].forEach((z,i)=>{
+  const rg = cy(0.124,0.124,0.040,12,i%2===0?mSilver:mAccent);
+  rg.rotation.x=Math.PI/2; rg.position.z=z; arm2.add(rg);
+});
+const stripe2 = bx(0.016,0.20,1.54,mGuinda); stripe2.position.set(0.095,0,0.79); arm2.add(stripe2);
+// Miniature servo (elbow)
+const svB = bx(0.20,0.18,0.26,mServo); svB.position.set(0.18,0.08,0.44); arm2.add(svB);
+const svLed = bx(0.04,0.04,0.04,new THREE.MeshStandardMaterial({color:0x6E0F1E,emissive:0x6E0F1E,emissiveIntensity:0.6}));
+svLed.position.set(0.18,0.17,0.44); arm2.add(svLed);
+const svH  = cy(0.065,0.065,0.05,10,mAccent); svH.rotation.z=Math.PI/2; svH.position.set(0.28,0.08,0.42); arm2.add(svH);
+
+// ════════════════════════════════════════════════════════
+// WRIST
+// ════════════════════════════════════════════════════════
+const wriP = new THREE.Group(); wriP.position.z=1.58; arm2.add(wriP);
+const wriG = new THREE.Group(); wriP.add(wriG);
+
+// Wrist cylinder (rotates about its Z = arm axis)
+const wriB = cy(0.140,0.152,0.28,16,mBone); wriB.rotation.x=Math.PI/2; wriG.add(wriB);
+const wriRa= tor(0.148,0.030,mGuinda); wriRa.rotation.x=Math.PI/2; wriRa.position.z=-0.11; wriG.add(wriRa);
+const wriRb= tor(0.148,0.030,mGuinda); wriRb.rotation.x=Math.PI/2; wriRb.position.z= 0.11; wriG.add(wriRb);
+const wriMid=cy(0.135,0.135,0.06,16,mSilver); wriMid.rotation.x=Math.PI/2; wriG.add(wriMid);
+// Miniature wrist servo
+const wsvB = bx(0.15,0.14,0.20,mServo); wsvB.position.set(0,0.17,0.04); wriG.add(wsvB);
+
+// ════════════════════════════════════════════════════════
+// GRIPPER — cable-driven, 3-segment fingers
+// Designed to match the IPN blueprint forked-pincer
+// ════════════════════════════════════════════════════════
+const gripRoot = new THREE.Group(); gripRoot.position.z=0.20; wriG.add(gripRoot);
+
+// Palm hub
+const palmHub = cy(0.115,0.125,0.16,14,mBone); palmHub.rotation.x=Math.PI/2; gripRoot.add(palmHub);
+const palmRing= tor(0.118,0.024,mGuinda); palmRing.rotation.x=Math.PI/2; gripRoot.add(palmRing);
+// Palm body
+const palmBody= bx(0.22,0.18,0.12,mBone); palmBody.position.z=0.10; gripRoot.add(palmBody);
+// Cable anchor plate
+const cablePlate = bx(0.18,0.06,0.06,mGuindaDk); cablePlate.position.set(0,-0.08,0.08); gripRoot.add(cablePlate);
+
+// ── Finger factory — 3 segments: base / middle / tip ──
+// sign: +1 upper finger, -1 lower finger
+const f1G = new THREE.Group(), f2G = new THREE.Group();
+[f1G, f2G].forEach((fg,fi)=>{
+  const sign = fi===0 ? 1 : -1;
+  gripRoot.add(fg);
+  fg.position.y = sign * 0.08;
+  fg.rotation.z = 0;
+
+  // ── Pivot knuckle ────────────────────────────────
+  const knuckle = sp(0.065, mJoint); fg.add(knuckle);
+  const kRing   = tor(0.065,0.016,mGuinda); fg.add(kRing);
+
+  // ── Segment 1 (proximal phalanx) ─────────────────
+  const seg1G = new THREE.Group(); seg1G.position.z=0.055; fg.add(seg1G);
+  const seg1  = bx(0.075,0.10,0.16,mBone); seg1.position.z=0.08; seg1G.add(seg1);
+  const seg1L = bx(0.030,0.10,0.155,mSilver); seg1L.position.set(-0.04,0,0.08); seg1G.add(seg1L);
+  const seg1R = bx(0.030,0.10,0.155,mSilver); seg1R.position.set( 0.04,0,0.08); seg1G.add(seg1R);
+
+  // ── Joint 1 ──────────────────────────────────────
+  const j1 = new THREE.Group(); j1.position.z=0.20; seg1G.add(j1);
+  const j1s= sp(0.050,mJoint); j1.add(j1s);
+  const j1r= tor(0.050,0.014,mGuinda); j1.add(j1r);
+
+  // ── Segment 2 (middle phalanx) ───────────────────
+  const seg2G = new THREE.Group(); seg2G.position.z=0.04; j1.add(seg2G);
+  const seg2  = bx(0.065,0.085,0.14,mBone); seg2.position.z=0.07; seg2G.add(seg2);
+  const seg2L = bx(0.025,0.085,0.135,mSilver); seg2L.position.set(-0.036,0,0.07); seg2G.add(seg2L);
+  const seg2R = bx(0.025,0.085,0.135,mSilver); seg2R.position.set( 0.036,0,0.07); seg2G.add(seg2R);
+
+  // ── Joint 2 ──────────────────────────────────────
+  const j2 = new THREE.Group(); j2.position.z=0.17; seg2G.add(j2);
+  const j2s= sp(0.042,mJoint); j2.add(j2s);
+
+  // ── Segment 3 (distal / tip — tapered) ───────────
+  const seg3G = new THREE.Group(); seg3G.position.z=0.035; j2.add(seg3G);
+  // Tapered block
+  const tipGeo = new THREE.BufferGeometry();
+  const tipVerts = new Float32Array([
+    // Front face (fingertip, narrow)
+    -0.022,-0.036, 0.14,  0.022,-0.036, 0.14, -0.022, 0.036, 0.14,
+     0.022, 0.036, 0.14,
+    // Back face (base, wide)
+    -0.030,-0.040,  0.0,  0.030,-0.040,  0.0, -0.030, 0.040,  0.0,
+     0.030, 0.040,  0.0,
+  ]);
+  const tipIdx = new Uint16Array([
+    0,1,2, 1,3,2,   // front
+    4,6,5, 5,6,7,   // back
+    0,4,1, 1,4,5,   // bottom
+    2,3,6, 3,7,6,   // top
+    0,2,4, 2,6,4,   // left
+    1,5,3, 3,5,7,   // right
+  ]);
+  tipGeo.setAttribute('position',new THREE.BufferAttribute(tipVerts,3));
+  tipGeo.setIndex(new THREE.BufferAttribute(tipIdx,1));
+  tipGeo.computeVertexNormals();
+  const tipMesh = new THREE.Mesh(tipGeo, mIvory); tipMesh.castShadow=true; seg3G.add(tipMesh);
+  // Rubber grip pad on tip
+  const padGeo = new THREE.BufferGeometry();
+  const padV = new Float32Array([
+    -0.018,-0.044,0.02, 0.018,-0.044,0.02, -0.018,-0.044,0.13, 0.018,-0.044,0.13
+  ]);
+  const padI = new Uint16Array([0,1,2, 1,3,2]);
+  padGeo.setAttribute('position',new THREE.BufferAttribute(padV,3));
+  padGeo.setIndex(new THREE.BufferAttribute(padI,1));
+  padGeo.computeVertexNormals();
+  const padMesh = new THREE.Mesh(padGeo, mRubber); padMesh.castShadow=false; seg3G.add(padMesh);
+  // Tip guinda accent line
+  const tipLine = bx(0.052,0.022,0.025,mTip); tipLine.position.set(0,0.035,0.005); seg3G.add(tipLine);
+
+  // ── Cable tension cord (visual wire from palm to tip) ─
+  const cableMat = new THREE.MeshStandardMaterial({color:0x080608,roughness:0.9});
+  const cable1 = cy(0.008,0.008,0.38,4,cableMat);
+  cable1.rotation.x=Math.PI/2; cable1.position.set(0.035*sign, sign*0, 0.19); fg.add(cable1);
+  const cable2 = cy(0.008,0.008,0.38,4,cableMat);
+  cable2.rotation.x=Math.PI/2; cable2.position.set(-0.035*sign, sign*0, 0.19); fg.add(cable2);
+});
+
+// references to finger groups for animation
+const grip_f1 = f1G, grip_f2 = f2G;
+
+// ── Apply joints to 3D ───────────────────────────────
+function applyArm(){
+  // Base: rotación vertical del pedestal
+  baseG.rotation.y = toRad(J.base.v);
+
+  // Hombro: sho=90 → brazo HORIZONTAL (rotation.x = 0)
+  //         sho=0  → brazo apuntando hacia arriba/atrás
+  //         sho=180→ brazo apuntando hacia abajo
+  shoG.rotation.x = toRad(-(J.sho.v - 90) * 0.85);
+
+  // Codo: 0=extendido, 135=completamente doblado
+  elbG.rotation.x = toRad(J.elb.v * 0.80);
+
+  // Muñeca: rotación axial
+  wriG.rotation.z = toRad(J.wri.v);
+
+  // Pinza: apertura simétrica con curvatura realista de dedos
+  const open = J.grip.v / 90;  // 0=cerrado, 1=abierto
+  const spread = open * 0.28;   // separación lateral
+  const curl   = open * 0.18;   // curvatura axial al abrir
+  grip_f1.position.y =  0.08 + spread;
+  grip_f2.position.y = -0.08 - spread;
+  grip_f1.rotation.z = -open * 0.26;
+  grip_f2.rotation.z =  open * 0.26;
+  // Pequeña rotación X para que los dedos se abran en abanico
+  grip_f1.rotation.x = -curl * 0.15;
+  grip_f2.rotation.x =  curl * 0.15;
+}
+
+// ── Camera orbit ─────────────────────────────────────
+let drag=false, lmx=0, lmy=0, camTh=0.82, camPh=0.40, camR=9.0;
+c3.addEventListener('mousedown', e=>{drag=true;lmx=e.clientX;lmy=e.clientY});
+document.addEventListener('mouseup',()=>drag=false);
+document.addEventListener('mousemove',e=>{
+  if(!drag)return;
+  camTh-=(e.clientX-lmx)*.005; lmx=e.clientX;
+  camPh=clamp(camPh-(e.clientY-lmy)*.004,0.06,1.45); lmy=e.clientY;
+});
+c3.addEventListener('wheel',e=>{camR=clamp(camR+e.deltaY*.012,2.5,18);},{passive:true});
+c3.addEventListener('touchstart',e=>{lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;},{passive:true});
+c3.addEventListener('touchmove',e=>{
+  camTh-=(e.touches[0].clientX-lmx)*.005;lmx=e.touches[0].clientX;
+  camPh=clamp(camPh-(e.touches[0].clientY-lmy)*.004,0.06,1.45);lmy=e.touches[0].clientY;
+},{passive:true});
+
+function resize3d(){
+  const w=vp.clientWidth,h=vp.clientHeight;
+  renderer.setSize(w,h,false);
+  cam3.aspect=w/h; cam3.updateProjectionMatrix();
+}
+resize3d(); window.addEventListener('resize',resize3d);
+
+function loop3d(){
+  requestAnimationFrame(loop3d);
+  cam3.position.set(
+    camR*Math.sin(camTh)*Math.cos(camPh),
+    camR*Math.sin(camPh),
+    camR*Math.cos(camTh)*Math.cos(camPh)
+  );
+  cam3.lookAt(1.8,1.0,0);
+  glow.intensity = 0.6+0.18*Math.sin(Date.now()*.0018);
+  goldL.intensity = 0.4+0.10*Math.sin(Date.now()*.0024+1.2);
+  renderer.render(scene,cam3);
+}
+loop3d();
+</script>
+
+<!-- ══════════════════════════════════════════════════ UI -->
+<script>
+// Tabs
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('pane-'+t.dataset.t).classList.add('active');
+  });
+});
+
+// Sliders
+JDEFS.forEach(d=>{
+  const sl=document.getElementById('sl-'+d.key);
+  if(sl) sl.addEventListener('input',()=>setJoint(d.key,parseFloat(sl.value)));
+});
+
+function refreshUI(){
+  JDEFS.forEach(d=>{
+    const v=Math.round(J[d.key].v);
+    const sl=document.getElementById('sl-'+d.key);
+    if(sl&&!sl.matches(':active')) sl.value=v;
+    const lv=document.getElementById('lv-'+d.key);
+    if(lv) lv.textContent=v+'°';
+    const hv=document.getElementById('h-'+d.key);
+    if(hv) hv.textContent=v+'°';
+  });
+  const ft=document.getElementById('ft-ang');
+  if(ft) ft.textContent=`B:${Math.round(J.base.v)}°  H:${Math.round(J.sho.v)}°  C:${Math.round(J.elb.v)}°  W:${Math.round(J.wri.v)}°  G:${Math.round(J.grip.v)}°`;
+}
+
+document.getElementById('btn-reset').addEventListener('click',()=>{
+  JDEFS.forEach(d=>setJoint(d.key,0)); log('Articulaciones restablecidas a 0°','info');
+});
+document.getElementById('btn-home').addEventListener('click',()=>{
+  JDEFS.forEach(d=>setJoint(d.key,d.def)); log('Posición HOME','ok');
+});
+
+// Log
+const logEl=document.getElementById('logbox');
+function log(msg,type='info'){
+  const d=document.createElement('div'); d.className='ll '+type;
+  const t=new Date().toLocaleTimeString('es-MX',{hour12:false});
+  d.textContent=t+' '+msg; logEl.appendChild(d);
+  while(logEl.children.length>10) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop=logEl.scrollHeight;
+}
+
+function modal(title,body){
+  document.getElementById('modal-t').textContent=title;
+  document.getElementById('modal-b').textContent=body;
+  document.getElementById('modalbg').classList.add('show');
+}
+
+// KB highlight
+const jbMap={base:'jb-base',sho:'jb-sho',elb:'jb-elb',wri:'jb-wri',grip:'jb-grip'};
+function hlJ(k){
+  Object.values(jbMap).forEach(id=>{const e=document.getElementById(id);if(e)e.classList.remove('kb');});
+  if(k&&jbMap[k]){const e=document.getElementById(jbMap[k]);if(e)e.classList.add('kb');}
+}
+
+applyArm(); refreshUI();
+log('Simulador 3D iniciado','ok');
+</script>
+
+<!-- ══════════════════════════════════════════════════ TECLADO -->
+<script>
+const KM={
+  'KeyQ':['base',-2],'KeyA':['base',+2],
+  'KeyW':['sho', +2],'KeyS':['sho', -2],
+  'KeyE':['elb', -2],'KeyD':['elb', +2],
+  'KeyR':['wri', +2],'KeyF':['wri', -2],
+  'KeyT':['grip',+2],'KeyG':['grip',-2],
+};
+const held=new Set(); let kbT=null;
+function kbStep(){ let l=null; held.forEach(c=>{if(KM[c]){const[k,d]=KM[c];setJoint(k,J[k].v+d);l=k;}}); hlJ(l); }
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.code==='Digit0'){JDEFS.forEach(d=>setJoint(d.key,0));return;}
+  if(e.code==='KeyH'){const kg=document.getElementById('kguide');kg.style.display=kg.style.display==='block'?'none':'block';return;}
+  if(KM[e.code]){e.preventDefault();held.add(e.code);if(!kbT)kbT=setInterval(kbStep,28);}
+});
+document.addEventListener('keyup',e=>{
+  held.delete(e.code);
+  if(!held.size&&kbT){clearInterval(kbT);kbT=null;hlJ(null);}
+});
+</script>
+
+<!-- ══════════════════════════════════════════════════ CALIBRACIÓN -->
+<script>
+const CAL0={base:{min:-180,max:180},sho:{min:0,max:180},elb:{min:0,max:135},wri:{min:-90,max:90},grip:{min:0,max:90}};
+function buildCalibUI(){
+  const c=document.getElementById('calib-wrap'); c.innerHTML='';
+  JDEFS.forEach(d=>{
+    const j=J[d.key];
+    c.innerHTML+=`<div class="cb"><div class="cbn">${d.lbl}</div>
+      <div class="cgr"><span class="clb">Mín</span><input type="number" class="inp-n" id="cm-${d.key}" value="${j.calMin}"><span class="cu">°</span></div>
+      <div class="cgr"><span class="clb">Máx</span><input type="number" class="inp-n" id="cx-${d.key}" value="${j.calMax}"><span class="cu">°</span></div>
+    </div>`;
+  });
+}
+buildCalibUI();
+function applyCalib(){
+  let ok=true;
+  JDEFS.forEach(d=>{
+    const mn=parseFloat(document.getElementById('cm-'+d.key).value);
+    const mx=parseFloat(document.getElementById('cx-'+d.key).value);
+    if(isNaN(mn)||isNaN(mx)||mn>=mx){log(`Rango inválido: ${d.lbl}`,'err');ok=false;return;}
+    J[d.key].calMin=mn; J[d.key].calMax=mx;
+    const sl=document.getElementById('sl-'+d.key);
+    if(sl){sl.min=mn;sl.max=mx;}
+    const lmin=document.getElementById('lm-'+d.key+'-min');
+    const lmax=document.getElementById('lm-'+d.key+'-max');
+    if(lmin)lmin.textContent=mn+'°'; if(lmax)lmax.textContent=mx+'°';
+    setJoint(d.key,J[d.key].v);
+  }); return ok;
+}
+document.getElementById('btn-save-cal').addEventListener('click',()=>{
+  if(!applyCalib())return;
+  const d={}; JDEFS.forEach(x=>d[x.key]={min:J[x.key].calMin,max:J[x.key].calMax});
+  localStorage.setItem('roboarm-ipn-calib',JSON.stringify(d)); log('Calibración guardada','ok');
+});
+document.getElementById('btn-load-cal').addEventListener('click',()=>{
+  const s=localStorage.getItem('roboarm-ipn-calib');
+  if(!s){log('No hay calibración guardada','err');return;}
+  const d=JSON.parse(s);
+  JDEFS.forEach(x=>{ if(d[x.key]){document.getElementById('cm-'+x.key).value=d[x.key].min;document.getElementById('cx-'+x.key).value=d[x.key].max;} });
+  applyCalib(); log('Calibración cargada','ok');
+});
+document.getElementById('btn-reset-cal').addEventListener('click',()=>{
+  JDEFS.forEach(d=>{document.getElementById('cm-'+d.key).value=CAL0[d.key].min;document.getElementById('cx-'+d.key).value=CAL0[d.key].max;});
+  applyCalib(); log('Calibración restaurada','info');
+});
+document.getElementById('btn-go-min').addEventListener('click',()=>{JDEFS.forEach(d=>setJoint(d.key,J[d.key].calMin));log('Moviendo a mínimos','info');});
+document.getElementById('btn-go-max').addEventListener('click',()=>{JDEFS.forEach(d=>setJoint(d.key,J[d.key].calMax));log('Moviendo a máximos','info');});
+try{const s=localStorage.getItem('roboarm-ipn-calib');if(s){const d=JSON.parse(s);JDEFS.forEach(x=>{if(d[x.key]){J[x.key].calMin=d[x.key].min;J[x.key].calMax=d[x.key].max;}});buildCalibUI();log('Calibración previa restaurada','info');}}catch(e){}
+</script>
+
+<!-- ══════════════════════════════════════════════════ DETECCIÓN V5 -->
+<script>
+const camVideo  = document.getElementById('cam-video');
+const camCanvas = document.getElementById('cam-canvas');
+const camCtx    = camCanvas.getContext('2d');
+const poseMap   = document.getElementById('pose-map');
+const pmCtx     = poseMap.getContext('2d');
+
+let handInst=null, poseInst=null, camInst=null, camActive=false, mirrorOn=false;
+let smoothAlpha=0.93, deadBand=2.5;
+let sens={base:0.55, sho:0.65, elb:0.75, grip:0.90};
+const EMA={base:{v:0,vel:0},sho:{v:90,vel:0},elb:{v:20,vel:0},wri:{v:0,vel:0},grip:{v:5,vel:0}};
+const LM_A=0.60;
+let rawHand=null, rawPose=null, lmHand=null, lmPose=null;
+let fc=0, fpsLast=Date.now(), fpsVal=0;
+
+// Toolbar state
+const CT = {skeleton:true, angles:true, hand:true, labels:false, trail:false, depthZ:false};
+document.querySelectorAll('.ctool').forEach(btn=>{
+  const id=btn.id;
+  const map={'ct-skeleton':'skeleton','ct-angles':'angles','ct-hand':'hand',
+    'ct-labels':'labels','ct-trail':'trail','ct-depth':'depthZ'};
+  const k=map[id]; if(!k) return;
+  btn.classList.toggle('active',CT[k]);
+  btn.addEventListener('click',()=>{ CT[k]=!CT[k]; btn.classList.toggle('active',CT[k]); });
+});
+
+// Trail buffer
+const TRAIL_MAX=40; const trail=[];
+
+// Velocity tracking
+let prevJoints={base:0,sho:90,elb:20,wri:0,grip:5};
+let jointVel=0, prevTime=Date.now();
+
+function smoothLM(prev,next,a){
+  if(!prev) return next.map(p=>({...p}));
+  return next.map((p,i)=>({
+    x:lerp(p.x,prev[i].x,a), y:lerp(p.y,prev[i].y,a),
+    z:lerp(p.z||0,prev[i].z||0,a), visibility:p.visibility
+  }));
+}
+function ang2d(a,b,c){
+  const bax=a.x-b.x,bay=a.y-b.y,bcx=c.x-b.x,bcy=c.y-b.y;
+  return Math.atan2(Math.abs(bax*bcy-bay*bcx), bax*bcx+bay*bcy)*180/Math.PI;
+}
+function dist2d(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
+function emaU(k,target){
+  const e=EMA[k];
+  const nv=lerp(target,e.v,smoothAlpha);
+  if(Math.abs(nv-e.v)<deadBand*0.1) return e.v;
+  e.vel=nv-e.v; e.v=nv; return e.v;
+}
+function getVis(lm,i){ return lm[i]?lm[i].visibility||0:0 }
+
+function onHandRes(res){
+  if(!res.multiHandLandmarks||!res.multiHandLandmarks.length){rawHand=null;return;}
+  let best=res.multiHandLandmarks[0];
+  if(res.multiHandedness){
+    for(let i=0;i<res.multiHandedness.length;i++){
+      if(res.multiHandedness[i].label==='Right'){best=res.multiHandLandmarks[i];break;}
+    }
+  }
+  rawHand=best;
+}
+function onPoseRes(res){ rawPose=res.poseLandmarks||null; }
+
+// ══════════════════════════════════════════════════════
+//  APERTURA DE MANO — multi-dedo (todos los 21 landmarks)
+//  Combina: pinch thumb-index, spread palmar, curvatura PIP
+// ══════════════════════════════════════════════════════
+function handOpenness(lm){
+  if(!lm||lm.length<21) return 0;
+  // Escala de la mano: muñeca → nudillo medio
+  const scale = dist2d(lm[0], lm[9]);
+  if(scale < 0.001) return 0;
+
+  // ── Método 1: spread desde el centro de la palma ──
+  // Centro de palma = promedio de muñeca + 5 MCPs
+  const palmPts = [0,5,9,13,17];
+  let cx=0, cy=0;
+  palmPts.forEach(i=>{ cx+=lm[i].x; cy+=lm[i].y; });
+  cx/=5; cy/=5;
+  const tips = [4,8,12,16,20];
+  const spreadDist = tips.reduce((s,i)=>s+dist2d({x:cx,y:cy},lm[i]),0)/5;
+  const spreadScore = clamp(spreadDist/(scale*1.15), 0, 1);
+
+  // ── Método 2: distancia pulgar a cada yema ──
+  const thumb = lm[4];
+  const avgThumbDist = [8,12,16,20].reduce((s,i)=>s+dist2d(thumb,lm[i]),0)/4;
+  const thumbScore = clamp(avgThumbDist/(scale*1.70), 0, 1);
+
+  // ── Método 3: extensión de dedos (PIP joints) ──
+  // Cada dedo: distancia punta → MCP / escala  (cuanto más extendido = más lejos)
+  const fingerPairs = [[4,2],[8,5],[12,9],[16,13],[20,17]]; // tip → MCP
+  const extScore = fingerPairs.reduce((s,[t,m])=>s+dist2d(lm[t],lm[m]),0)/(5*scale*1.0);
+  const normExt = clamp((extScore-0.5)*2, 0, 1);
+
+  // Combinación ponderada — más peso al spread y al pulgar
+  return clamp(spreadScore*0.45 + thumbScore*0.40 + normExt*0.15, 0, 1);
+}
+
+function processFrame(){
+  if(rawHand) lmHand=smoothLM(lmHand,rawHand,LM_A);
+  if(rawPose) lmPose=smoothLM(lmPose,rawPose,LM_A);
+
+  let conf=0;
+  let tBase=EMA.base.v, tSho=EMA.sho.v, tElb=EMA.elb.v, tWri=EMA.wri.v, tGrip=EMA.grip.v;
+
+  if(lmPose){
+    const RS=lmPose[12], LS=lmPose[11], RE=lmPose[14], RW=lmPose[16];
+    const vRS=RS.visibility||0, vRE=RE.visibility||0, vRW=RW.visibility||0;
+    conf = Math.min(vRS, vRE, vRW);
+
+    if(conf > 0.28){
+      // ── BASE: rotación lateral del brazo del usuario ──────
+      // Posición horizontal de la muñeca relativa al hombro
+      // Cuando el brazo apunta al centro/frente → base=0
+      // Cuando el brazo va a la derecha del usuario → base positiva
+      const armLen = Math.max(0.01, dist2d(RS, RW));
+      const latRatio = (RS.x - RW.x) / armLen; // -1 a +1
+      const latAngle = Math.atan2(RS.x - RW.x, armLen) * 180/Math.PI;
+      tBase = clamp(latAngle * sens.base * 2.0, J.base.calMin, J.base.calMax);
+
+      // ── HOMBRO: elevación del brazo superior desde vertical ──
+      // Vec desde hombro a codo
+      const uArmX = RE.x - RS.x;
+      const uArmY = RE.y - RS.y; // negativo = codo sobre hombro (brazo arriba)
+      // Ángulo desde la vertical (upward). 0=recto arriba, 90=horizontal, 180=abajo
+      const elevFromVert = Math.atan2(Math.abs(uArmX), Math.max(0.001, -uArmY)) * 180/Math.PI;
+      // Mapeo: brazo arriba (elevFromVert≈0) → robot sho=90 (brazo horizontal)
+      // brazo horizontal (elevFromVert≈90) → robot sho=45 (brazo algo elevado)
+      const shoTarget = 90 - elevFromVert * sens.sho * 0.80;
+      tSho = clamp(shoTarget + 90, 0, 180);
+
+      const pShx=document.getElementById('p-shx'); if(pShx) pShx.textContent=latAngle.toFixed(1)+'°';
+      const pShy=document.getElementById('p-shy'); if(pShy) pShy.textContent=elevFromVert.toFixed(1)+'°';
+      document.getElementById('cd-base').textContent=Math.round(tBase)+'°';
+      document.getElementById('cd-sho').textContent=Math.round(tSho)+'°';
+
+      // ── CODO: ángulo 2D hombro-codo-muñeca ───────────────
+      if(vRE>0.30 && vRW>0.30){
+        const rawElbow = ang2d(RS, RE, RW); // 0-180°, 180=extendido
+        // Mapeo: extendido (180°) → robot codo=0, doblado (30°) → robot codo=135
+        const elbTarget = clamp((180 - rawElbow) * 0.75 * sens.elb, 0, 135);
+        tElb = elbTarget;
+        const pElb=document.getElementById('p-elb'); if(pElb) pElb.textContent=rawElbow.toFixed(1)+'°';
+        document.getElementById('cd-elb').textContent=rawElbow.toFixed(0)+'°';
+      }
+
+      // ── MUÑECA desde pose (fallback sin mano) ────────────
+      if(vRW>0.25 && !lmHand){
+        // Ángulo del antebrazo codo→muñeca
+        const faX = RW.x - RE.x, faY = RW.y - RE.y;
+        const uaX = RS.x - RE.x, uaY = RS.y - RE.y;
+        const faAngle = Math.atan2(faX, -faY)*180/Math.PI - Math.atan2(uaX,-uaY)*180/Math.PI;
+        tWri = clamp(faAngle*0.50, J.wri.calMin, J.wri.calMax);
+      }
+
+      // Trail
+      if(CT.trail && vRW>0.35){ trail.push({x:RW.x,y:RW.y}); if(trail.length>TRAIL_MAX)trail.shift(); }
+      else if(!CT.trail) trail.length=0;
+    }
+  }
+
+  // ── MANO: muñeca precisa + PINZA multi-dedo ──────────
+  if(lmHand){
+    const hw=lmHand[0], hm=lmHand[9];
+    const ha=Math.atan2(hm.y-hw.y, hm.x-hw.x)*180/Math.PI;
+    tWri = clamp(ha*0.70, J.wri.calMin, J.wri.calMax);
+    const pWri=document.getElementById('p-wri'); if(pWri) pWri.textContent=ha.toFixed(1)+'°';
+    document.getElementById('cd-wri').textContent=ha.toFixed(0)+'°';
+
+    // PINZA — openness combinado de todos los dedos
+    const openness = handOpenness(lmHand);
+    tGrip = clamp(openness * 90 * sens.grip, J.grip.calMin, J.grip.calMax);
+    const pGrip=document.getElementById('p-grip'); if(pGrip) pGrip.textContent=(openness*100).toFixed(0)+'%';
+    document.getElementById('cd-grip').textContent=(openness*100).toFixed(0)+'%';
+
+    if(!lmPose) conf=Math.max(conf, 0.55);
+  }
+
+  setJoint('base', emaU('base',tBase));
+  setJoint('sho',  emaU('sho', tSho));
+  setJoint('elb',  emaU('elb', tElb));
+  setJoint('wri',  emaU('wri', tWri));
+  setJoint('grip', emaU('grip',tGrip));
+
+  // Velocidad
+  const now2=Date.now();
+  const dt=(now2-prevTime)/1000||0.033;
+  const vel=JDEFS.reduce((s,d)=>s+Math.abs(J[d.key].v-prevJoints[d.key]),0)/dt;
+  jointVel=lerp(vel,jointVel,0.88);
+  JDEFS.forEach(d=>prevJoints[d.key]=J[d.key].v);
+  prevTime=now2;
+  document.getElementById('cd-vel').textContent=jointVel.toFixed(0)+' °/s';
+
+  const pct=Math.round(conf*100);
+  const pConf=document.getElementById('p-conf'); if(pConf) pConf.textContent=pct+'%';
+  document.getElementById('cd-conf').textContent=pct+'%';
+  document.getElementById('conf-bar').style.width=pct+'%';
+
+  fc++;
+  const now3=Date.now();
+  if(now3-fpsLast>800){fpsVal=Math.round(fc*1000/(now3-fpsLast));fc=0;fpsLast=now3;}
+  document.getElementById('cam-fps').textContent=fpsVal+' fps';
+
+  const pmStatus=document.getElementById('pm-status');
+  if(conf>0.7){pmStatus.textContent='BUENO';pmStatus.style.color='var(--ok)';}
+  else if(conf>0.4){pmStatus.textContent='MEDIO';pmStatus.style.color='var(--warn)';}
+  else{pmStatus.textContent='BAJO';pmStatus.style.color='var(--err)';}
+
+  drawOverlay();
+  drawPoseMap();
+}
+
+// ── POSE connections ────────────────────────────────
+const POSE_CONN=[
+  [11,12],[11,23],[12,24],[23,24],           // torso
+  [11,13],[13,15],[15,17],[15,19],[17,19],   // left arm
+  [12,14],[14,16],[16,18],[16,20],[18,20],   // right arm
+  [23,25],[25,27],[27,29],[29,31],[27,31],   // left leg
+  [24,26],[26,28],[28,30],[30,32],[28,32],   // right leg
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10] // face
+];
+const R_ARM=new Set([12,14,16,18,20,22]);
+const L_ARM=new Set([11,13,15,17,19,21]);
+const JNT_LBL={0:'Nariz',11:'H.Izq',12:'H.Der',13:'C.Izq',14:'C.Der',15:'M.Izq',16:'M.Der',23:'C.Izq',24:'C.Der'};
+
+function ptN(lm,i,w,h){return {x:lm[i].x*w,y:lm[i].y*h,z:lm[i].z||0,v:lm[i].visibility||1}}
+
+function drawOverlay(){
+  const w=camCanvas.offsetWidth||280, h=camCanvas.offsetHeight||160;
+  camCanvas.width=w; camCanvas.height=h;
+  camCtx.clearRect(0,0,w,h);
+  // Trail
+  if(CT.trail&&trail.length>1){
+    camCtx.save();
+    for(let i=1;i<trail.length;i++){
+      const a=trail[i-1],b=trail[i];
+      const al=(i/trail.length)*0.55;
+      camCtx.globalAlpha=al;
+      camCtx.strokeStyle='#8C1428'; camCtx.lineWidth=1.5+al*2; camCtx.lineCap='round';
+      camCtx.beginPath(); camCtx.moveTo(a.x*w,a.y*h); camCtx.lineTo(b.x*w,b.y*h); camCtx.stroke();
+    }
+    camCtx.restore(); camCtx.globalAlpha=1;
+  }
+  if(CT.skeleton&&lmPose) drawPoseFull(lmPose,w,h);
+  if(CT.hand&&lmHand)     drawHandFull(lmHand,w,h);
+}
+
+function segCol(a,b){ if(R_ARM.has(a)&&R_ARM.has(b))return{c:'#8C1428',lw:2.8}; if(L_ARM.has(a)&&L_ARM.has(b))return{c:'#B09090',lw:1.5}; if(a>=23||b>=23)return{c:'#A0A898',lw:1.2}; return{c:'#907878',lw:1.5}; }
+
+function drawPoseFull(lm,w,h){
+  POSE_CONN.forEach(([a,b])=>{
+    if(!lm[a]||!lm[b]) return;
+    const vis=Math.min(getVis(lm,a),getVis(lm,b));
+    if(vis<0.20) return;
+    const {c,lw}=segCol(a,b);
+    const pa=ptN(lm,a,w,h), pb=ptN(lm,b,w,h);
+    camCtx.globalAlpha=Math.max(0.15,Math.min(1,vis*0.9));
+    camCtx.strokeStyle=c; camCtx.lineWidth=lw; camCtx.lineCap='round';
+    camCtx.beginPath(); camCtx.moveTo(pa.x,pa.y); camCtx.lineTo(pb.x,pb.y); camCtx.stroke();
+  });
+  camCtx.globalAlpha=1;
+  for(let i=0;i<lm.length;i++){
+    if(!lm[i]) continue;
+    const vis=lm[i].visibility||0;
+    if(vis<0.20) continue;
+    const p=ptN(lm,i,w,h);
+    let col='#907070',r=2.0;
+    if(R_ARM.has(i)){col='#8C1428';r=3.5;}
+    else if(L_ARM.has(i)){col='#B09090';r=2.5;}
+    else if(i===0){col='#706060';r=2.8;}
+    if(CT.depthZ&&lm[i].z!==undefined){
+      const d=clamp((lm[i].z+0.5)*255,0,255);
+      col=`rgb(${Math.round(d*0.6)},${Math.round(d*0.3)},${Math.round(d*0.2)})`;
+    }
+    camCtx.globalAlpha=Math.max(0.25,Math.min(1,vis));
+    camCtx.beginPath(); camCtx.arc(p.x,p.y,r,0,Math.PI*2);
+    camCtx.fillStyle=col; camCtx.fill();
+    if(R_ARM.has(i)&&[12,14,16].includes(i)){
+      camCtx.strokeStyle='#F5EFE6'; camCtx.lineWidth=1;
+      camCtx.beginPath(); camCtx.arc(p.x,p.y,r+1.8,0,Math.PI*2); camCtx.stroke();
+    }
+    camCtx.globalAlpha=1;
+    if(CT.labels&&JNT_LBL[i]){
+      const fs=Math.max(7,Math.round(w*0.036));
+      camCtx.font=`600 ${fs}px IBM Plex Mono, monospace`;
+      camCtx.globalAlpha=Math.max(0.3,vis*0.8);
+      camCtx.strokeStyle='#FDFAF6CC'; camCtx.lineWidth=2;
+      camCtx.strokeText(JNT_LBL[i],p.x+4,p.y-4);
+      camCtx.fillStyle=R_ARM.has(i)?'#8C1428':'#706060';
+      camCtx.fillText(JNT_LBL[i],p.x+4,p.y-4);
+      camCtx.globalAlpha=1;
+    }
+  }
+  if(CT.angles){
+    if(lm[12]&&lm[14]&&lm[16]&&Math.min(getVis(lm,12),getVis(lm,14),getVis(lm,16))>0.40){
+      const ea=ang2d(ptN(lm,12,w,h),ptN(lm,14,w,h),ptN(lm,16,w,h));
+      const ep=ptN(lm,14,w,h);
+      camCtx.globalAlpha=0.6; camCtx.strokeStyle='#8C1428'; camCtx.lineWidth=1;
+      camCtx.beginPath(); camCtx.arc(ep.x,ep.y,8,0,toRad(ea)); camCtx.stroke(); camCtx.globalAlpha=1;
+      drawLbl(ep.x-5,ep.y-10,Math.round(ea)+'°','#7A1022',w);
+    }
+    if(lm[12]&&getVis(lm,12)>0.45){
+      const sp=ptN(lm,12,w,h);
+      drawLbl(sp.x+6,sp.y-2,((0.5-lm[12].y)*200).toFixed(0)+'%','#9A7820',w);
+    }
+    if(lm[11]&&lm[12]&&Math.min(getVis(lm,11),getVis(lm,12))>0.4){
+      const ls=ptN(lm,11,w,h),rs=ptN(lm,12,w,h);
+      const sa=Math.atan2(rs.y-ls.y,rs.x-ls.x)*180/Math.PI;
+      drawLbl((ls.x+rs.x)/2-6,(ls.y+rs.y)/2-9,Math.round(sa)+'°','#806060',w);
+    }
+    if(lmHand&&CT.hand){
+      const hw=ptN(lmHand,0,w,h), hm=ptN(lmHand,9,w,h);
+      const ha=Math.atan2(hm.y-hw.y,hm.x-hw.x)*180/Math.PI;
+      drawLbl(hw.x+5,hw.y-8,Math.round(ha)+'°','#6A0F1C',w);
+    }
+  }
+}
+
+function drawHandFull(lm,w,h){
+  const pt=i=>({x:lm[i].x*w,y:lm[i].y*h,z:lm[i].z||0});
+  const FING=[
+    {f:[0,1,2,3,4],c:'#C89098'},
+    {f:[0,5,6,7,8],c:'#C07888'},
+    {f:[0,9,10,11,12],c:'#B86878'},
+    {f:[0,13,14,15,16],c:'#B05870'},
+    {f:[0,17,18,19,20],c:'#A84868'},
+  ];
+  FING.forEach(({f,c})=>{
+    for(let i=0;i<f.length-1;i++){
+      const a=pt(f[i]),b=pt(f[i+1]);
+      camCtx.globalAlpha=0.75; camCtx.strokeStyle=c; camCtx.lineWidth=i===0?2.0:1.5; camCtx.lineCap='round';
+      camCtx.beginPath(); camCtx.moveTo(a.x,a.y); camCtx.lineTo(b.x,b.y); camCtx.stroke();
+    }
+  });
+  camCtx.globalAlpha=1;
+  [4,8,12,16,20].forEach((i,fi)=>{
+    const p=pt(i);
+    const cols=['#C04058','#B83048','#AC2038','#A01028','#940018'];
+    camCtx.beginPath(); camCtx.arc(p.x,p.y,3.5,0,Math.PI*2);
+    camCtx.fillStyle=cols[fi]; camCtx.fill();
+    if(CT.depthZ){
+      const d=clamp((lm[i].z+0.5)*255,0,255);
+      camCtx.globalAlpha=0.45;
+      camCtx.beginPath(); camCtx.arc(p.x,p.y,5.5,0,Math.PI*2);
+      camCtx.fillStyle=`rgb(${d},${Math.round(d*0.5)},0)`; camCtx.fill();
+      camCtx.globalAlpha=1;
+    }
+  });
+  [5,9,13,17].forEach(i=>{const p=pt(i);camCtx.beginPath();camCtx.arc(p.x,p.y,2,0,Math.PI*2);camCtx.fillStyle='#B09098';camCtx.fill();});
+  // Wrist
+  const wr=pt(0);
+  camCtx.beginPath(); camCtx.arc(wr.x,wr.y,3.5,0,Math.PI*2); camCtx.fillStyle='#9A7080'; camCtx.fill();
+  camCtx.strokeStyle='#F5EFE6'; camCtx.lineWidth=1.2;
+  camCtx.beginPath(); camCtx.arc(wr.x,wr.y,5.5,0,Math.PI*2); camCtx.stroke();
+  // Apertura multi-dedo: conectar cada yema al pulgar y mostrar centro palma
+  const thumb4=pt(4);
+  const palmPts5=[0,5,9,13,17];
+  let pcx=0,pcy=0; palmPts5.forEach(i=>{pcx+=lm[i].x*w;pcy+=lm[i].y*h;}); pcx/=5;pcy/=5;
+  
+  // Conectar cada yema al centro de palma (indicador de apertura)
+  [4,8,12,16,20].forEach((i,fi)=>{
+    const p=pt(i);
+    const fracOpen=dist2d({x:pcx,y:pcy},{x:p.x*w,y:p.y*h});
+    const hscale2=dist2d(pt(0),pt(9));
+    const col2=fi===0?'#D4A840':'#B83048'; // pulgar=oro, dedos=guinda
+    camCtx.globalAlpha=0.35;
+    camCtx.strokeStyle=col2; camCtx.lineWidth=1; camCtx.setLineDash([2,3]);
+    camCtx.beginPath(); camCtx.moveTo(pcx,pcy); camCtx.lineTo(p.x*w,p.y*h); camCtx.stroke();
+  });
+  camCtx.setLineDash([]); camCtx.globalAlpha=1;
+  
+  // Círculo de apertura de palma
+  const hs3=dist2d(pt(0),pt(9));
+  const openness3 = handOpenness(lm);
+  const openRadius = openness3 * hs3 * w * 0.5;
+  camCtx.globalAlpha=0.18;
+  camCtx.strokeStyle= openness3>0.5?'#4A9860':'#D4A840';
+  camCtx.lineWidth=1.5; camCtx.setLineDash([3,3]);
+  camCtx.beginPath(); camCtx.arc(pcx,pcy,openRadius,0,Math.PI*2); camCtx.stroke();
+  camCtx.setLineDash([]); camCtx.globalAlpha=1;
+
+  // Punto central de palma
+  camCtx.beginPath(); camCtx.arc(pcx,pcy,3,0,Math.PI*2); camCtx.fillStyle='#D4A840'; camCtx.fill();
+
+  // Thumb–index line (secondary reference)
+  const th=pt(4),idx=pt(8);
+  const hs2=dist2d(pt(0),pt(9)); const pN=hs2>0.001?dist2d(th,idx)/hs2:0;
+  const pc2=pN<0.22?'#256938':pN<0.50?'#7A5210':'#8C1A18';
+  camCtx.globalAlpha=0.70; camCtx.strokeStyle=pc2; camCtx.lineWidth=1.5; camCtx.setLineDash([2,2]);
+  camCtx.beginPath(); camCtx.moveTo(th.x,th.y); camCtx.lineTo(idx.x,idx.y); camCtx.stroke();
+  camCtx.setLineDash([]); camCtx.globalAlpha=1;
+  const mx2=(th.x+idx.x)/2, my2=(th.y+idx.y)/2;
+  drawLbl(mx2+3,my2-5,(openness3*100).toFixed(0)+'%',pc2,w);
+  // Wrist arrow
+  const hw2=pt(0),hm2=pt(9);
+  const dx=hm2.x-hw2.x,dy=hm2.y-hw2.y,len=Math.sqrt(dx*dx+dy*dy);
+  if(len>6){
+    const nx=dx/len,ny=dy/len,ang=Math.atan2(ny,nx),ae=Math.PI/7;
+    camCtx.globalAlpha=0.55; camCtx.strokeStyle='#A87080'; camCtx.lineWidth=1.5;
+    camCtx.beginPath(); camCtx.moveTo(hw2.x,hw2.y); camCtx.lineTo(hw2.x+nx*14,hw2.y+ny*14); camCtx.stroke();
+    camCtx.beginPath();
+    camCtx.moveTo(hw2.x+nx*14,hw2.y+ny*14);
+    camCtx.lineTo(hw2.x+nx*14-6*Math.cos(ang-ae),hw2.y+ny*14-6*Math.sin(ang-ae));
+    camCtx.moveTo(hw2.x+nx*14,hw2.y+ny*14);
+    camCtx.lineTo(hw2.x+nx*14-6*Math.cos(ang+ae),hw2.y+ny*14-6*Math.sin(ang+ae));
+    camCtx.stroke(); camCtx.globalAlpha=1;
+  }
+}
+
+function drawLbl(x,y,text,color,w){
+  const fs=Math.max(7,Math.round(w*0.038));
+  camCtx.font=`600 ${fs}px IBM Plex Mono, monospace`;
+  camCtx.strokeStyle='#FDFAF6D0'; camCtx.lineWidth=2.5;
+  camCtx.strokeText(text,x,y);
+  camCtx.fillStyle=color; camCtx.fillText(text,x,y);
+}
+
+function drawPoseMap(){
+  const w2=poseMap.offsetWidth||264, h2=80;
+  poseMap.width=w2; poseMap.height=h2;
+  pmCtx.clearRect(0,0,w2,h2);
+  if(!lmPose) return;
+  const mx=i=>lmPose[i].x*w2*0.82+w2*0.09;
+  const my=i=>lmPose[i].y*h2*0.9+h2*0.05;
+  POSE_CONN.forEach(([a,b])=>{
+    if(!lmPose[a]||!lmPose[b]) return;
+    const vis=Math.min(getVis(lmPose,a),getVis(lmPose,b));
+    if(vis<0.2) return;
+    const {c,lw}=segCol(a,b);
+    pmCtx.globalAlpha=Math.max(0.18,vis*0.75);
+    pmCtx.strokeStyle=c; pmCtx.lineWidth=Math.max(0.8,lw*0.6); pmCtx.lineCap='round';
+    pmCtx.beginPath(); pmCtx.moveTo(mx(a),my(a)); pmCtx.lineTo(mx(b),my(b)); pmCtx.stroke();
+  });
+  [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{
+    if(!lmPose[i]||getVis(lmPose,i)<0.2) return;
+    const r=R_ARM.has(i)?2.5:1.6;
+    const col=R_ARM.has(i)?'#8C1428':'#907878';
+    pmCtx.globalAlpha=Math.max(0.2,getVis(lmPose,i)*0.85);
+    pmCtx.beginPath(); pmCtx.arc(mx(i),my(i),r,0,Math.PI*2);
+    pmCtx.fillStyle=col; pmCtx.fill();
+  });
+  pmCtx.globalAlpha=1;
+}
+
+// ── Start / Stop Webcam ──────────────────────────────
+async function startCam(){
+  const btn=document.getElementById('btn-cam-start');
+  btn.textContent='Cargando...'; btn.disabled=true;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:640},height:{ideal:480},facingMode:'user',frameRate:{ideal:30}}
+    });
+    camVideo.srcObject=stream;
+    await new Promise(r=>camVideo.onloadedmetadata=r);
+    await camVideo.play();
+    document.getElementById('cam-overlay').style.display='flex';
+    document.getElementById('st-cam').className='chip on';
+    document.getElementById('btn-mirror').disabled=false; document.getElementById('btn-mirror').style.opacity='1';
+    document.getElementById('btn-calib-n').disabled=false; document.getElementById('btn-calib-n').style.opacity='1';
+    document.getElementById('ft-mode').textContent='Modo: Visión';
+    log('Webcam conectada','ok');
+    if(typeof Hands!=='undefined'){
+      handInst=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+      handInst.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.55,minTrackingConfidence:0.50});
+      handInst.onResults(onHandRes);
+      document.getElementById('st-hand').className='chip on';
+      log('MediaPipe Hands listo','ok');
+    }
+    if(typeof Pose!=='undefined'){
+      poseInst=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+      poseInst.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,
+        minDetectionConfidence:0.50,minTrackingConfidence:0.45});
+      poseInst.onResults(onPoseRes);
+      document.getElementById('st-pose').className='chip on';
+      log('MediaPipe Pose listo','ok');
+    }
+    const ml=handInst&&poseInst?'POSE+MANO':handInst?'SOLO MANO':'SOLO POSE';
+    document.getElementById('cam-mode-lbl').textContent=ml;
+    if(typeof Camera!=='undefined'&&(handInst||poseInst)){
+      camInst=new Camera(camVideo,{
+        onFrame:async()=>{
+          if(handInst)await handInst.send({image:camVideo});
+          if(poseInst)await poseInst.send({image:camVideo});
+          processFrame();
+        },width:640,height:480
+      });
+      await camInst.start();
+    } else {
+      camActive=true;
+      (async function raf(){
+        if(!camActive)return;
+        if(handInst)await handInst.send({image:camVideo});
+        if(poseInst)await poseInst.send({image:camVideo});
+        processFrame(); requestAnimationFrame(raf);
+      })();
+    }
+    camActive=true;
+    btn.style.display='none'; document.getElementById('btn-cam-stop').style.display='block';
+  }catch(err){
+    btn.textContent='▶ Iniciar webcam'; btn.disabled=false;
+    log('Error: '+err.message,'err');
+    modal('Error al acceder a la cámara',
+      'No se pudo iniciar la webcam.\n\nVerifica:\n• Permisos en el navegador\n• Que no esté usada por otra app\n• HTTPS o localhost\n\n'+err.message);
+  }
+}
+function stopCam(){
+  camActive=false;
+  if(camInst){camInst.stop();camInst=null;}
+  if(handInst){try{handInst.close();}catch(e){}handInst=null;}
+  if(poseInst){try{poseInst.close();}catch(e){}poseInst=null;}
+  if(camVideo.srcObject){camVideo.srcObject.getTracks().forEach(t=>t.stop());camVideo.srcObject=null;}
+  lmHand=null;lmPose=null;rawHand=null;rawPose=null;trail.length=0;
+  document.getElementById('cam-overlay').style.display='none';
+  ['st-cam','st-hand','st-pose'].forEach(id=>document.getElementById(id).className='chip');
+  document.getElementById('btn-cam-start').textContent='▶ Iniciar webcam';
+  document.getElementById('btn-cam-start').disabled=false;
+  document.getElementById('btn-cam-start').style.display='block';
+  document.getElementById('btn-cam-stop').style.display='none';
+  document.getElementById('btn-mirror').disabled=true; document.getElementById('btn-mirror').style.opacity='.4';
+  document.getElementById('btn-calib-n').disabled=true; document.getElementById('btn-calib-n').style.opacity='.4';
+  document.getElementById('ft-mode').textContent='Modo: Manual';
+  log('Webcam detenida','info');
+}
+document.getElementById('btn-cam-start').addEventListener('click',startCam);
+document.getElementById('btn-cam-stop').addEventListener('click',stopCam);
+document.getElementById('btn-mirror').addEventListener('click',function(){
+  mirrorOn=!mirrorOn; camVideo.style.transform=mirrorOn?'scaleX(-1)':'none';
+  this.textContent=mirrorOn?'⇔ Espejo: ON':'⇔ Espejo';
+  this.classList.toggle('gh',mirrorOn);
+});
+document.getElementById('btn-calib-n').addEventListener('click',()=>{
+  Object.keys(EMA).forEach(k=>EMA[k].v=J[k].v);
+  log('Posición neutral fijada','ok');
+});
+document.getElementById('sl-smooth').addEventListener('input',function(){
+  smoothAlpha=parseFloat(this.value); document.getElementById('lv-smooth').textContent=smoothAlpha.toFixed(2);
+});
+document.getElementById('sl-dead').addEventListener('input',function(){
+  deadBand=parseFloat(this.value); document.getElementById('lv-dead').textContent=deadBand.toFixed(1);
+});
+['base','sho','elb','grip'].forEach(k=>{
+  const sl=document.getElementById('se-'+k); if(!sl)return;
+  sl.addEventListener('input',function(){ sens[k]=parseFloat(this.value); document.getElementById('sv-'+k).textContent=sens[k].toFixed(1)+'×'; });
+});
+</script>
+
+<!-- ══════════════════════════════════════════════════ SERIAL -->
+<script>
+let port=null,writer=null,reader=null,serialHz=20,serialT=null;
+function slog(msg,cls='s-sy'){
+  const el=document.getElementById('slog');
+  const t=new Date().toLocaleTimeString('es-MX',{hour12:false});
+  el.innerHTML+=`<div class="${cls}">[${t}] ${msg}</div>`; el.scrollTop=el.scrollHeight;
+}
+async function connectSerial(){
+  if(!('serial' in navigator)){modal('Web Serial no disponible',
+    'Requiere Google Chrome o Microsoft Edge v89 o superior.\nLa página debe servirse por HTTPS o localhost.');return;}
+  try{
+    port=await navigator.serial.requestPort();
+    const baud=parseInt(document.getElementById('sel-baud').value);
+    await port.open({baudRate:baud}); writer=port.writable.getWriter();
+    document.getElementById('st-serial').className='chip on';
+    document.getElementById('serial-txt').textContent='Conectado — '+baud+' baud';
+    document.getElementById('port-name').textContent=port.getInfo().usbProductId||'USB Serial';
+    document.getElementById('btn-conn').textContent='Desconectar'; document.getElementById('btn-conn').className='btn d';
+    document.getElementById('ft-ser').textContent='Serial: '+baud+' bd';
+    ['btn-home-ser','btn-ping'].forEach(id=>{const e=document.getElementById(id);e.disabled=false;e.style.opacity='1';});
+    serialT=setInterval(sendCmd,Math.round(1000/serialHz));
+    slog('Conectado @ '+baud+' baud'); log('Serial conectado','ok'); startReader();
+  }catch(err){slog('Error: '+err.message,'s-er');log('Error serial: '+err.message,'err');}
+}
+async function disconnectSerial(){
+  clearInterval(serialT);serialT=null;
+  if(reader){try{await reader.cancel();}catch(e){}reader=null;}
+  if(writer){await writer.releaseLock();writer=null;}
+  if(port){await port.close();port=null;}
+  document.getElementById('st-serial').className='chip';
+  document.getElementById('serial-txt').textContent='Desconectado';
+  document.getElementById('port-name').textContent='—';
+  document.getElementById('btn-conn').textContent='⚡ Conectar'; document.getElementById('btn-conn').className='btn p';
+  document.getElementById('ft-ser').textContent='Serial: —';
+  ['btn-home-ser','btn-ping'].forEach(id=>{const e=document.getElementById(id);e.disabled=true;e.style.opacity='.4';});
+  slog('Desconectado'); log('Serial desconectado','info');
+}
+async function startReader(){
+  reader=port.readable.getReader(); const dec=new TextDecoder(); let buf='';
+  try{while(true){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value);let nl;while((nl=buf.indexOf('\n'))!==-1){const l=buf.substring(0,nl).trim();if(l)slog('← '+l,'s-rx');buf=buf.substring(nl+1);}}}
+  catch(e){if(e.name!=='AbortError')slog('Error RX: '+e.message,'s-er');}
+}
+function buildCmd(){
+  return `B:${Math.round(clamp((J.base.v+180)/2,0,180))},H:${Math.round(clamp(J.sho.v,0,180))},C:${Math.round(clamp(J.elb.v,0,135))},W:${Math.round(clamp(J.wri.v+90,0,180))},G:${Math.round(clamp(J.grip.v,0,90))}`;
+}
+async function sendRaw(cmd){if(!writer)return;try{await writer.write(new TextEncoder().encode(cmd+'\n'));slog('→ '+cmd,'s-tx');}catch(err){slog('TX err: '+err.message,'s-er');disconnectSerial();}}
+async function sendCmd(){if(writer)await sendRaw(buildCmd());}
+document.getElementById('btn-conn').addEventListener('click',()=>port?disconnectSerial():connectSerial());
+document.getElementById('sl-hz').addEventListener('input',function(){
+  serialHz=parseInt(this.value); document.getElementById('lv-hz').textContent=serialHz+' Hz';
+  if(serialT){clearInterval(serialT);serialT=setInterval(sendCmd,Math.round(1000/serialHz));}
+});
+document.getElementById('btn-home-ser').addEventListener('click',async()=>{
+  await sendRaw('B:90,H:45,C:45,W:90,G:0'); JDEFS.forEach(d=>setJoint(d.key,d.def)); log('HOME enviado','ok');
+});
+document.getElementById('btn-ping').addEventListener('click',()=>sendRaw('PING'));
+document.getElementById('btn-send-raw').addEventListener('click',()=>{const v=document.getElementById('inp-cmd').value.trim();if(v)sendRaw(v);});
+document.getElementById('inp-cmd').addEventListener('keydown',e=>{if(e.key==='Enter'){const v=e.target.value.trim();if(v)sendRaw(v);}});
+document.getElementById('btn-clr').addEventListener('click',()=>document.getElementById('slog').innerHTML='');
+document.getElementById('btn-copy-fw').addEventListener('click',()=>navigator.clipboard.writeText(FW).then(()=>log('Firmware copiado','ok')));
+</script>
+</body>
+</html>
