@@ -2,422 +2,453 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RoboArm IPN — Control 5-GDL</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=DM+Sans:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>RoboArm IPN — Control 5-GDL v9</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 <style>
-/* ══════════════════════════════════════════════════════
-   PALETA IPN V4 — INSTITUCIONAL REFINADA
-   Base: crema muy suave. Guinda como único acento vivo.
-   Tipografía: Playfair Display + DM Sans + IBM Plex Mono
-══════════════════════════════════════════════════════ */
 :root {
-  --g:       #6E0F1E;   /* guinda IPN */
-  --g-deep:  #490A14;
+  --g:       #6E0F1E;
+  --g-deep:  #440A13;
   --g-mid:   #8C1428;
-  --g-pale:  #F7ECED;
+  --g-pale:  #F7ECEE;
   --g-line:  #C9949C;
-  --g-tint:  #EDD8DB;
-
+  --g-tint:  #EDD6DA;
   --bg:      #EDE7DD;
   --bg2:     #E3DDD3;
   --surface: #F5F1EB;
-  --surf2:   #EEEAD3;   /* slightly warm */
-  --brd:     #CFC8BC;
-  --brd2:    #B5ADA0;
-
+  --brd:     #D0C8BA;
+  --brd2:    #B8B0A2;
   --ink:     #1A1410;
-  --ink2:    #3E342A;
-  --ink3:    #7A6E64;
-  --ink4:    #A8A098;
-
+  --ink2:    #3C3228;
+  --ink3:    #7A6E62;
+  --ink4:    #A8A096;
   --ok:      #256938;
   --warn:    #7A5210;
   --err:     #8C1A18;
-
-  --f-display: 'Playfair Display', Georgia, serif;
-  --f-body:    'DM Sans', system-ui, sans-serif;
-  --f-mono:    'IBM Plex Mono', monospace;
+  --f-disp: 'Playfair Display', Georgia, serif;
+  --f-body: 'Cormorant Garamond', Georgia, serif;
+  --f-mono: 'IBM Plex Mono', monospace;
+  --sidebar-w: 372px;
+  --header-h: 56px;
+  --footer-h: 30px;
+  --nav-h: 52px;
+  --radius: 2px;
+  --trans: .22s cubic-bezier(.4,0,.2,1);
 }
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box }
-html, body { height:100%; background:var(--bg); color:var(--ink); font-family:var(--f-body) }
-
-/* ══ LAYOUT ══════════════════════════════════════════ */
+html { font-size: 16px }
+body { height:100vh; background:var(--bg); color:var(--ink); font-family:var(--f-body); overflow: hidden; }
 #app {
   display: grid;
-  grid-template-rows: 54px 1fr 30px;
-  grid-template-columns: 1fr 388px;
-  height: 100vh;
+  grid-template-rows: var(--header-h) 1fr var(--footer-h);
+  grid-template-columns: 1fr var(--sidebar-w);
+  height: 100vh; overflow: hidden;
 }
-header  { grid-column:1/-1; display:flex; align-items:center; padding:0 22px; gap:14px;
-  background:var(--g-deep); border-bottom:2px solid var(--g) }
-#vp     { position:relative; overflow:hidden;
-  background:radial-gradient(ellipse 80% 65% at 48% 40%, #F5EFE6 0%, #E8DFD2 55%, #D8CEBE 100%) }
-aside   { background:var(--surface); border-left:1px solid var(--brd); display:flex; flex-direction:column; overflow:hidden }
-footer  { grid-column:1/-1; background:var(--g-deep); border-top:1px solid var(--g);
-  display:flex; align-items:center; padding:0 16px; gap:18px }
-
-/* ══ HEADER ══════════════════════════════════════════ */
+header { grid-column: 1/-1 }
+footer  { grid-column: 1/-1 }
+header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 20px;
+  background: var(--g-deep);
+  border-bottom: 2px solid var(--g);
+  z-index: 30;
+}
 .crest {
-  width:36px; height:40px; flex-shrink:0;
-  background:linear-gradient(150deg,#8C1428 0%,#490A14 100%);
-  clip-path:polygon(50% 0%,100% 20%,100% 80%,50% 100%,0% 80%,0% 20%);
-  display:flex; align-items:center; justify-content:center;
-  font-family:var(--f-mono); font-size:8px; font-weight:500; color:#EDE7DD; letter-spacing:.6px;
+  width: 34px; height: 38px; flex-shrink: 0;
+  background: linear-gradient(145deg, #8C1428 0%, #440A13 100%);
+  clip-path: polygon(50% 0%, 100% 22%, 100% 78%, 50% 100%, 0% 78%, 0% 22%);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--f-mono); font-size: 7.5px; font-weight: 500;
+  color: #EDE7DD; letter-spacing: .8px;
 }
-.hdr-brand { flex:1 }
-.hdr-title {
-  font-family:var(--f-display); font-weight:600; font-size:15px;
-  color:#F0EAE2; letter-spacing:.3px;
-}
-.hdr-sub {
-  font-family:var(--f-mono); font-size:8.5px; color:#C0A8AD;
-  letter-spacing:2px; margin-top:2px; font-weight:300;
-}
-.hdr-sep { width:1px; height:30px; background:#490A14 }
-.hdr-keys {
-  font-family:var(--f-mono); font-size:8.5px; color:#C0A8AD;
-  background:#38090F44; border:1px solid #6E0F1E55; padding:4px 10px; letter-spacing:.5px;
-}
-.hdr-keys b { color:#EDE7DD }
-.chips { display:flex; gap:7px }
-.chip {
-  display:flex; align-items:center; gap:5px; padding:3px 9px;
-  border:1px solid #49091488; font-family:var(--f-mono); font-size:8.5px;
-  color:#A89098; letter-spacing:1px; transition:all .25s;
-}
-.chip .dot { width:6px; height:6px; border-radius:50%; background:#490A14; transition:all .25s }
-.chip.on .dot { background:#6FBA8A; box-shadow:0 0 6px #6FBA8A }
-.chip.on      { color:#A0CCA8; border-color:#2A5C3A }
-.chip.warn .dot { background:#C8A050; box-shadow:0 0 5px #C8A050 }
-.chip.warn    { color:#C8A050; border-color:#6A5020 }
+.hdr-brand { flex: 1; min-width: 0 }
+.hdr-title { font-family: var(--f-disp); font-weight: 600; font-size: 14.5px; color: #F2EAE2; letter-spacing: .3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hdr-sub { font-family: var(--f-mono); font-size: 7.5px; color: #C0A8AE; letter-spacing: 2px; margin-top: 2px; font-weight: 300; display: none; }
+@media (min-width: 640px) { .hdr-sub { display: block } }
+.hdr-sep { width: 1px; height: 28px; background: #490A1455; flex-shrink: 0 }
+.hdr-keys { font-family: var(--f-mono); font-size: 8px; color: #B09098; background: #38090F44; border: 1px solid #6E0F1E44; padding: 4px 10px; letter-spacing: .4px; display: none; }
+.hdr-keys b { color: #EDE7DD }
+@media (min-width: 1100px) { .hdr-keys { display: block } }
+.chips { display: flex; gap: 6px; flex-shrink: 0 }
+.chip { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid #49091466; font-family: var(--f-mono); font-size: 7.5px; color: #906870; letter-spacing: 1px; transition: all var(--trans); }
+.chip .dot { width: 5px; height: 5px; border-radius: 50%; background: #490A14; transition: all var(--trans) }
+.chip.on .dot { background: #6FBA8A; box-shadow: 0 0 6px #6FBA8A }
+.chip.on { color: #8ECCAA; border-color: #2A5C3A }
+.chip.warn .dot { background: #C8A050 }
+.chip.warn { color: #C8A050; border-color: #6A5020 }
+#btn-sidebar-toggle { display: none; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid #6E0F1E55; background: #38090F44; color: #C0A8B0; cursor: pointer; flex-shrink: 0; transition: all var(--trans); }
+#btn-sidebar-toggle:hover { background: #6E0F1E44; color: #EDE7DD }
+#btn-sidebar-toggle svg { width: 18px; height: 18px }
 
-/* ══ VIEWPORT ════════════════════════════════════════ */
-#three-canvas { display:block; width:100%; height:100% }
+/* ── Viewport ─────────────────────────────────────────────── */
+#vp {
+  position: relative; overflow: hidden;
+  background: radial-gradient(ellipse 80% 70% at 45% 38%, #F5EFE6 0%, #E8DFD2 55%, #D8CEBE 100%);
+}
+#three-canvas { display: block; width: 100%; height: 100% }
 
+/* ── HUD ──────────────────────────────────────────────────── */
 #hud {
-  position:absolute; top:14px; left:14px; pointer-events:none;
-  background:#FDFAF6EE; backdrop-filter:blur(6px);
-  border:1px solid var(--brd); border-left:3px solid var(--g);
-  padding:10px 14px; min-width:134px;
-  box-shadow:0 2px 12px #00000014;
+  position: absolute; top: 14px; left: 14px; pointer-events: none;
+  background: #FDFAF6EE; backdrop-filter: blur(6px);
+  border: 1px solid var(--brd); border-left: 3px solid var(--g);
+  padding: 10px 14px; min-width: 128px;
+  box-shadow: 0 2px 16px #00000012;
 }
-.hrow {
-  display:flex; justify-content:space-between; gap:18px; align-items:baseline;
-  font-family:var(--f-mono); font-size:9.5px; color:var(--ink3); line-height:2.1;
-}
-.hrow .hv { font-size:13px; font-weight:500; color:var(--g); min-width:42px; text-align:right }
+.hrow { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; font-family: var(--f-mono); font-size: 9px; color: var(--ink3); line-height: 2.1; }
+.hv { font-family: var(--f-mono); font-size: 13px; font-weight: 500; color: var(--g); min-width: 40px; text-align: right }
 
-#kguide {
-  position:absolute; top:14px; right:14px; display:none;
-  background:#FDFAF6EE; backdrop-filter:blur(6px);
-  border:1px solid var(--brd); padding:9px 13px;
-  font-family:var(--f-mono); font-size:8.5px; color:var(--ink3); line-height:2.1;
-  box-shadow:0 2px 12px #00000014;
+/* Amplification indicator HUD */
+#amp-hud {
+  position: absolute; top: 14px; left: 170px; pointer-events: none;
+  background: #FDFAF6EE; backdrop-filter: blur(6px);
+  border: 1px solid var(--brd); border-left: 3px solid #D4A830;
+  padding: 8px 12px; font-family: var(--f-mono); font-size: 8px;
+  color: var(--ink3); box-shadow: 0 2px 16px #00000012; display: none;
 }
-#kguide .k {
-  background:var(--bg2); border:1px solid var(--brd); color:var(--g-mid);
-  padding:1px 5px; font-size:8px;
-}
+.amp-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; line-height: 1.9; }
+.amp-bar-wrap { width: 48px; height: 4px; background: var(--brd); border-radius: 2px; overflow: hidden; }
+.amp-bar { height: 100%; background: linear-gradient(90deg, #D4A830, #8C1428); border-radius: 2px; transition: width .1s; }
+.amp-val { color: var(--g); font-weight: 500; min-width: 28px; text-align: right; font-size: 9px; }
 
-/* ── Webcam overlay ───────────────────────────────── */
+#kguide { position: absolute; top: 14px; right: 14px; display: none; background: #FDFAF6EE; backdrop-filter: blur(6px); border: 1px solid var(--brd); padding: 10px 14px; font-family: var(--f-mono); font-size: 8.5px; color: var(--ink3); line-height: 2.2; box-shadow: 0 2px 16px #00000012; }
+.k { background: var(--bg2); border: 1px solid var(--brd); color: var(--g-mid); padding: 1px 5px; font-size: 8px; border-radius: 1px; }
+
+/* ── Camera overlay ───────────────────────────────────────── */
 #cam-overlay {
-  position:absolute; bottom:12px; left:14px; width:280px;
-  display:none; flex-direction:column;
-  background:#FEFAF5F2; backdrop-filter:blur(8px);
-  border:1px solid var(--brd); border-top:2px solid var(--g);
-  box-shadow:0 4px 20px #00000018;
+  position: fixed; bottom: 48px; left: 14px; width: 292px;
+  display: none; flex-direction: column;
+  background: #FEFAF5F6; backdrop-filter: blur(10px);
+  border: 1px solid var(--brd); border-top: 2px solid var(--g);
+  box-shadow: 0 8px 32px #00000028, 0 2px 8px #00000018;
+  border-radius: 3px; z-index: 100; user-select: none;
 }
+#cam-overlay.dragging { box-shadow: 0 16px 48px #00000040; }
+#cam-overlay.minimized #cam-body { display: none; }
 #cam-hdr {
-  padding:5px 10px; background:var(--g-pale);
-  display:flex; justify-content:space-between; align-items:center;
-  font-family:var(--f-mono); font-size:8.5px; color:var(--g); letter-spacing:1.5px;
-  border-bottom:1px solid var(--brd);
+  padding: 7px 10px; background: var(--g-pale);
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--f-mono); font-size: 8px; color: var(--g); letter-spacing: 1.5px;
+  border-bottom: 1px solid var(--brd); cursor: grab; border-radius: 2px 2px 0 0;
 }
-.cam-fps { color:var(--g-mid); font-weight:500 }
-#cam-wrap { position:relative; height:160px; overflow:hidden }
-#cam-video  { width:100%; height:100%; object-fit:cover; display:block }
-#cam-canvas { position:absolute; inset:0; width:100%; height:100% }
-/* Camera toolbar */
-#cam-toolbar {
-  display:flex; gap:4px; padding:5px 8px; background:var(--surface);
-  border-bottom:1px solid var(--brd); flex-wrap:wrap;
+#cam-hdr:active { cursor: grabbing; }
+#cam-hdr-left { display: flex; align-items: center; gap: 6px; }
+#cam-hdr-right { display: flex; align-items: center; gap: 6px; }
+.cam-badge { font-size: 6.5px; background: var(--g-tint); color: var(--g); padding: 1px 5px; border: 1px solid var(--g-line); letter-spacing: 1px; }
+.cam-ctrl-btn { width: 16px; height: 16px; border: 1px solid var(--g-line); background: transparent; color: var(--g); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 8px; border-radius: 1px; transition: all .12s; }
+.cam-ctrl-btn:hover { background: var(--g); color: #F5ECEE; }
+#cam-body {}
+#cam-wrap { position: relative; height: 165px; overflow: hidden }
+#cam-video  { width: 100%; height: 100%; object-fit: cover; display: block; }
+#cam-canvas { position: absolute; inset: 0; width: 100%; height: 100% }
+#cam-toolbar { display: flex; gap: 3px; padding: 5px 8px; background: var(--surface); border-bottom: 1px solid var(--brd); flex-wrap: wrap; }
+.ctool { padding: 3px 7px; font-family: var(--f-mono); font-size: 7px; cursor: pointer; border: 1px solid var(--brd); background: transparent; color: var(--ink3); letter-spacing: .8px; transition: all .14s; border-radius: var(--radius); }
+.ctool.active { background: var(--g); color: #F5ECEE; border-color: var(--g-deep) }
+.cam-conf { height: 4px; background: var(--brd) }
+.cam-conf .fill { height: 100%; background: linear-gradient(90deg, var(--g), var(--g-mid)); transition: width .18s; width: 0 }
+#cam-stats-panel { border-top: 1px solid var(--brd); background: var(--surface) }
+.cam-stats-row  { display: grid; grid-template-columns: repeat(4,1fr); padding: 4px 8px; gap: 2px; border-bottom: 1px solid var(--bg2) }
+.cam-stats-row2 { display: grid; grid-template-columns: repeat(3,1fr); padding: 4px 8px; gap: 2px }
+.cs { font-family: var(--f-mono); font-size: 7px; color: var(--ink4); line-height: 1.5 }
+.cs span { color: var(--g); font-weight: 500; display: block; font-size: 9px }
+#pose-map-wrap { padding: 5px 8px; background: var(--bg2); border-top: 1px solid var(--brd) }
+#pose-map-label { font-family: var(--f-mono); font-size: 7px; color: var(--ink4); letter-spacing: 1px; margin-bottom: 3px; display: flex; justify-content: space-between; }
+#pose-map { display: block; width: 100%; height: 74px }
+#pinch-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  background: #0A080CCC; backdrop-filter: blur(4px);
+  border: 1px solid #6E0F1E88; border-radius: 2px;
+  padding: 3px 7px; font-family: var(--f-mono); font-size: 8px; color: #E8C8CC;
+  display: flex; align-items: center; gap: 4px;
 }
-.ctool {
-  padding:3px 7px; font-family:var(--f-mono); font-size:7.5px; cursor:pointer;
-  border:1px solid var(--brd); background:var(--surface); color:var(--ink3);
-  letter-spacing:.8px; transition:all .15s;
-}
-.ctool:hover { border-color:var(--g); color:var(--g) }
-.ctool.active { background:var(--g); color:#F5ECEE; border-color:var(--g-deep) }
+#pinch-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--g); transition: background .1s; }
+#pinch-dot.open { background: #6FBA8A; box-shadow: 0 0 6px #6FBA8A; }
 
-.cam-conf   { height:4px; background:var(--brd) }
-.cam-conf .fill { height:100%; background:linear-gradient(90deg,var(--g),var(--g-mid)); transition:width .18s; width:0 }
-/* Extended stats panel */
-#cam-stats-panel {
-  border-top:1px solid var(--brd); background:var(--surface);
-}
-.cam-stats-row {
-  display:grid; grid-template-columns:repeat(4,1fr); padding:4px 8px; gap:2px;
-  border-bottom:1px solid var(--bg2);
-}
-.cam-stats-row2 {
-  display:grid; grid-template-columns:repeat(3,1fr); padding:4px 8px; gap:2px;
-}
-.cs { font-family:var(--f-mono); font-size:7.5px; color:var(--ink4); line-height:1.5 }
-.cs span { color:var(--g); font-weight:500; display:block; font-size:9px }
-/* Pose map mini canvas */
-#pose-map-wrap {
-  padding:5px 8px; background:var(--bg2); border-top:1px solid var(--brd);
-}
-#pose-map-label {
-  font-family:var(--f-mono); font-size:7.5px; color:var(--ink4); letter-spacing:1px; margin-bottom:3px;
-  display:flex; justify-content:space-between;
-}
-#pose-map { display:block; width:100%; height:80px }
-
-#logbox {
-  position:absolute; bottom:12px; right:14px;
-  width:236px; max-height:86px; overflow-y:auto;
-  background:#FDFAF6EE; backdrop-filter:blur(4px);
-  border:1px solid var(--brd); border-left:2px solid var(--g-line);
-  padding:5px 7px; box-shadow:0 2px 12px #00000014;
-}
-.ll { font-family:var(--f-mono); font-size:8.5px; line-height:1.7; color:var(--ink4) }
-.ll.ok   { color:var(--ok) } .ll.err  { color:var(--err) }
-.ll.info { color:#4A7AAA } .ll.tx   { color:var(--g-mid) }
-
-/* ══ SIDEBAR ══════════════════════════════════════════ */
-.tabrow {
-  display:flex; border-bottom:1px solid var(--brd);
-  background:var(--bg2); flex-shrink:0;
-}
-.tab {
-  flex:1; padding:10px 2px; text-align:center;
-  font-family:var(--f-mono); font-size:8.5px; color:var(--ink4);
-  cursor:pointer; letter-spacing:1.5px;
-  border-bottom:2px solid transparent; transition:all .18s; user-select:none;
-}
-.tab:hover { color:var(--ink3) }
-.tab.active { color:var(--g); border-bottom-color:var(--g); background:var(--surface) }
-
-.pane { display:none; flex:1; overflow-y:auto; flex-direction:column; gap:11px; padding:14px }
-.pane.active { display:flex }
-::-webkit-scrollbar { width:3px }
-::-webkit-scrollbar-track { background:var(--bg) }
-::-webkit-scrollbar-thumb { background:var(--brd2) }
-
-.sec {
-  font-family:var(--f-display); font-style:italic; font-size:12px;
-  color:var(--g); border-bottom:1px solid var(--g-line);
-  padding-bottom:3px; letter-spacing:.2px;
+/* Calibration badge on camera */
+#cal-badge {
+  position: absolute; bottom: 5px; left: 6px; z-index: 2;
+  background: #0A080CCC; backdrop-filter: blur(4px);
+  border: 1px solid #D4A83088; border-radius: 2px;
+  padding: 3px 7px; font-family: var(--f-mono); font-size: 7px; color: #E8D870;
+  display: none; align-items: center; gap: 4px;
 }
 
-/* Joint sliders */
-.jb {
-  background:var(--surface); border:1px solid var(--brd);
-  border-left:3px solid var(--brd2); padding:9px 11px;
-  transition:border-left-color .2s, box-shadow .2s;
+#logbox { position: absolute; bottom: 12px; right: 14px; width: 224px; max-height: 80px; overflow-y: auto; background: #FDFAF6F0; backdrop-filter: blur(4px); border: 1px solid var(--brd); border-left: 2px solid var(--g-line); padding: 5px 7px; box-shadow: 0 2px 12px #00000010; }
+.ll { font-family: var(--f-mono); font-size: 8px; line-height: 1.75; color: var(--ink4) }
+.ll.ok { color: var(--ok) } .ll.err { color: var(--err) }
+.ll.info { color: #4A7AAA } .ll.tx { color: var(--g-mid) }
+
+/* ── Signal quality ────────────────────────────────────────── */
+#signal-bar {
+  position: absolute; top: 14px; right: 14px;
+  display: none; flex-direction: column; gap: 4px;
+  background: #FDFAF6EE; backdrop-filter: blur(6px);
+  border: 1px solid var(--brd); padding: 8px 12px;
+  font-family: var(--f-mono); font-size: 7.5px; color: var(--ink3);
+  box-shadow: 0 2px 12px #00000010;
 }
-.jb.kb { border-left-color:var(--g); box-shadow:0 0 0 1px var(--g-tint) }
-.jr { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px }
-.jn { font-family:var(--f-body); font-weight:500; font-size:11.5px; color:var(--ink2) }
-.jk { font-family:var(--f-mono); font-size:8px; color:var(--ink4);
-  background:var(--bg2); padding:1px 5px; border:1px solid var(--brd) }
-.jv { font-family:var(--f-mono); font-size:15px; font-weight:500; color:var(--g);
-  min-width:42px; text-align:right }
-input[type=range] {
-  width: 100%;
-  appearance: none;           /* estándar */
-  -webkit-appearance: none;   /* Chrome/Safari */
-  height: 3px;
-  background: var(--brd2);
-  outline: none;
-  border-radius: 2px;
+.sig-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.sig-name { color: var(--ink4); }
+.sig-val { color: var(--g); font-weight: 500; min-width: 36px; text-align: right; }
+.sig-gauge { width: 60px; height: 3px; background: var(--brd); position: relative; }
+.sig-fill { height: 100%; background: linear-gradient(90deg, var(--g), #E05070); transition: width .15s; }
+
+/* ── Sidebar ──────────────────────────────────────────────── */
+aside { background: var(--surface); border-left: 1px solid var(--brd); display: flex; flex-direction: column; overflow: hidden; transition: transform var(--trans); z-index: 40; }
+#aside-backdrop { display: none; position: fixed; inset: 0; background: #00000038; z-index: 35; }
+.tabrow { display: flex; border-bottom: 1px solid var(--brd); background: var(--bg2); flex-shrink: 0; }
+.tab { flex: 1; padding: 8px 4px; text-align: center; cursor: pointer; border-bottom: 2px solid transparent; transition: all var(--trans); user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.tab:hover { background: var(--surface) }
+.tab.active { background: var(--surface); border-bottom-color: var(--g) }
+.tab-icon { font-size: 14px; line-height: 1; color: var(--ink4); transition: color var(--trans); }
+.tab-lbl { font-family: var(--f-mono); font-size: 7px; color: var(--ink4); letter-spacing: 1.5px; transition: color var(--trans); }
+.tab.active .tab-icon, .tab.active .tab-lbl { color: var(--g) }
+.pane { display: none; flex: 1; overflow-y: auto; flex-direction: column; gap: 11px; padding: 14px }
+.pane.active { display: flex }
+::-webkit-scrollbar { width: 3px }
+::-webkit-scrollbar-track { background: var(--bg) }
+::-webkit-scrollbar-thumb { background: var(--brd2) }
+.sec { font-family: var(--f-disp); font-style: italic; font-size: 12.5px; color: var(--g); border-bottom: 1px solid var(--g-line); padding-bottom: 3px; letter-spacing: .2px; flex-shrink: 0; }
+.jb { background: var(--surface); border: 1px solid var(--brd); border-left: 3px solid var(--brd2); padding: 9px 11px; transition: border-left-color var(--trans), box-shadow var(--trans); }
+.jb.kb { border-left-color: var(--g); box-shadow: 0 0 0 1px var(--g-tint) }
+.jr { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; gap: 4px }
+.jn { font-family: var(--f-body); font-weight: 600; font-size: 12px; color: var(--ink2); line-height: 1.2; }
+.jk { font-family: var(--f-mono); font-size: 7.5px; color: var(--ink4); background: var(--bg2); padding: 1px 5px; border: 1px solid var(--brd); white-space: nowrap; }
+.jv { font-family: var(--f-mono); font-size: 15px; font-weight: 500; color: var(--g); min-width: 40px; text-align: right }
+.jlim { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 7px; color: var(--ink4); margin-top: 3px }
+input[type=range] { width: 100%; appearance: none; -webkit-appearance: none; height: 3px; background: var(--brd2); outline: none; border-radius: 2px; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--g); cursor: pointer; border: 2px solid var(--surface); box-shadow: 0 1px 6px #6E0F1E44; transition: box-shadow .14s; }
+input[type=range]::-webkit-slider-thumb:hover { box-shadow: 0 1px 12px #6E0F1E88 }
+.btn { padding: 7px 12px; border: 1px solid var(--brd2); background: var(--surface); color: var(--ink3); font-family: var(--f-mono); font-size: 8.5px; cursor: pointer; letter-spacing: .8px; transition: all var(--trans); border-radius: var(--radius); }
+.btn:hover { border-color: var(--g); color: var(--g) }
+.btn.p { background: var(--g); color: #F5ECEE; border-color: var(--g-deep); font-weight: 500 }
+.btn.p:hover { background: var(--g-mid) }
+.btn.gh { border-color: var(--g-line); color: var(--g) }
+.btn.gh:hover { background: var(--g-pale) }
+.btn.d { border-color: #B04040; color: #8C2020 }
+.btn.d:hover { background: #FFF0F0 }
+.btn.gold { background: #D4A830; color: #1A1000; border-color: #A07010; font-weight: 500 }
+.btn.gold:hover { background: #C09020 }
+.btn.f { width: 100% }
+.br { display: flex; gap: 6px }
+.info { background: var(--bg2); border: 1px solid var(--brd); border-left: 3px solid var(--g-line); padding: 9px 11px; font-family: var(--f-body); font-size: 13px; color: var(--ink3); line-height: 1.85; }
+.info .ac { color: var(--g); font-weight: 600 }
+.info .hl { color: var(--ink2); font-weight: 600 }
+.dgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px }
+.dc { background: var(--bg2); border: 1px solid var(--brd); padding: 7px 9px }
+.dcl { font-family: var(--f-mono); font-size: 7px; color: var(--ink4); letter-spacing: 1px; margin-bottom: 2px }
+.dcv { font-family: var(--f-mono); font-size: 13px; font-weight: 500; color: var(--g) }
+.inp { background: var(--surface); border: 1px solid var(--brd); color: var(--ink); font-family: var(--f-mono); font-size: 10px; padding: 5px 8px; outline: none; width: 100%; border-radius: var(--radius); }
+.inp:focus { border-color: var(--g) }
+.inp-n { background: var(--surface); border: 1px solid var(--brd); color: var(--g); font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 4px 6px; outline: none; text-align: right; width: 100%; border-radius: var(--radius); }
+.inp-n:focus { border-color: var(--g) }
+select.sel { background: var(--surface); border: 1px solid var(--brd); color: var(--ink); font-family: var(--f-mono); font-size: 9px; padding: 5px 8px; outline: none; cursor: pointer; border-radius: var(--radius); }
+.sel:focus { border-color: var(--g) }
+.cb { background: var(--surface); border: 1px solid var(--brd); padding: 9px 11px; margin-bottom: 5px }
+.cbn { font-family: var(--f-mono); font-size: 8.5px; font-weight: 500; color: var(--g); letter-spacing: 1.5px; margin-bottom: 7px }
+.cgr { display: grid; grid-template-columns: 38px 1fr 24px; align-items: center; gap: 6px; margin-bottom: 4px }
+.clb { font-family: var(--f-mono); font-size: 8px; color: var(--ink4) }
+.cu  { font-family: var(--f-mono); font-size: 8px; color: var(--ink4) }
+#slog { background: #0E0810; border: 1px solid #28101C; padding: 7px; height: 112px; overflow-y: auto; font-family: var(--f-mono); font-size: 8px; line-height: 1.7; }
+.s-tx { color: #C89098 } .s-rx { color: #6FBA8A }
+.s-er { color: #D07880 } .s-sy { color: #8AAAC0 }
+.fwcode { background: #0A0610; border: 1px solid #28101C; padding: 8px; font-family: var(--f-mono); font-size: 7.5px; color: #98C890; line-height: 1.55; overflow: auto; max-height: 180px; white-space: pre; }
+.srow { display: grid; grid-template-columns: 56px 1fr 40px; align-items: center; gap: 8px; padding: 2px 0; }
+.sl { font-family: var(--f-mono); font-size: 8px; color: var(--ink4) }
+
+/* Amplification info box */
+.amp-info { background: #FDF9F0; border: 1px solid #D4A83055; border-left: 3px solid #D4A830; padding: 9px 11px; font-family: var(--f-mono); font-size: 8px; color: var(--ink3); line-height: 1.8; }
+.amp-info .gold { color: #8C6010; font-weight: 500 }
+
+footer { background: var(--g-deep); border-top: 1px solid var(--g); display: flex; align-items: center; padding: 0 16px; gap: 16px; z-index: 20; }
+.ft { font-family: var(--f-mono); font-size: 8px; color: #B0A0A8; letter-spacing: .8px }
+.ft.d { color: #988890 }
+#ft-ang { margin-left: auto; font-family: var(--f-mono); font-size: 8px; color: #D0B8C0; letter-spacing: .3px }
+
+#nav-bar { display: none; position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-h); background: var(--g-deep); border-top: 2px solid var(--g); z-index: 50; }
+.nav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; border: none; background: transparent; padding: 0; transition: background var(--trans); }
+.nav-btn:active { background: #6E0F1E22 }
+.nav-btn .ni { font-size: 16px; line-height: 1 }
+.nav-btn .nl { font-family: var(--f-mono); font-size: 8px; color: #B09098; letter-spacing: .8px }
+.nav-btn.active .nl { color: #E8C8CC }
+.nav-btn.active .ni { filter: brightness(1.4) }
+
+#modalbg { display: none; position: fixed; inset: 0; background: #00000077; z-index: 200; align-items: center; justify-content: center; }
+#modalbg.show { display: flex }
+.modal { background: var(--surface); border: 1px solid var(--brd); border-top: 3px solid var(--g); max-width: 460px; width: 90%; padding: 22px 24px; box-shadow: 0 8px 40px #00000028; }
+.modal h3 { font-family: var(--f-disp); font-size: 16px; color: var(--g); margin-bottom: 10px }
+.modal p  { font-family: var(--f-body); font-size: 14px; color: var(--ink2); line-height: 1.9; margin-bottom: 16px; white-space: pre-wrap }
+
+@media (max-width: 900px) {
+  #app { grid-template-columns: 1fr; }
+  #btn-sidebar-toggle { display: flex }
+  aside { position: fixed; top: var(--header-h); right: 0; bottom: var(--footer-h); width: min(var(--sidebar-w), 90vw); transform: translateX(100%); box-shadow: -6px 0 30px #00000022; }
+  aside.open { transform: translateX(0) }
+  #aside-backdrop { display: block }
+  #logbox { right: auto; left: 14px; bottom: 48px }
+  #cam-overlay { width: min(292px, calc(100vw - 28px)); }
+  #amp-hud { display: none; }
 }
-input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
-  background:var(--g); cursor:pointer; border:2px solid var(--surface);
-  box-shadow:0 1px 5px #6E0F1E44; transition:box-shadow .15s;
+@media (max-width: 620px) {
+  :root { --header-h: 48px; --footer-h: 0px }
+  #app { grid-template-rows: var(--header-h) 1fr; }
+  footer { display: none }
+  #nav-bar { display: flex }
+  #hud { top: 8px; left: 8px; padding: 7px 10px }
+  .hrow { font-size: 8px; gap: 10px }
+  .hv { font-size: 12px }
+  #logbox { display: none }
+  aside { top: auto; right: 0; left: 0; bottom: var(--nav-h); width: 100%; height: 65vh; transform: translateY(100%); border-radius: 14px 14px 0 0; border-left: none; border-top: 3px solid var(--g); box-shadow: 0 -6px 30px #00000022; }
+  aside.open { transform: translateY(0) }
+  #cam-overlay { width: calc(100vw - 28px); min-width: 0; bottom: calc(var(--nav-h) + 8px); }
+  #chips .chip:nth-child(n+3) { display: none }
+  #amp-hud { display: none !important; }
 }
-input[type=range]::-webkit-slider-thumb:hover { box-shadow:0 1px 10px #6E0F1E88 }
-.jlim { display:flex; justify-content:space-between; font-family:var(--f-mono);
-  font-size:7.5px; color:var(--ink4); margin-top:3px }
-
-/* Buttons */
-.btn {
-  padding:7px 13px; border:1px solid var(--brd2); background:var(--surface);
-  color:var(--ink3); font-family:var(--f-mono); font-size:8.5px; cursor:pointer;
-  letter-spacing:1px; transition:all .15s;
-}
-.btn:hover { border-color:var(--g); color:var(--g) }
-.btn.p { background:var(--g); color:#F5ECEE; border-color:var(--g-deep); font-weight:500 }
-.btn.p:hover { background:var(--g-mid) }
-.btn.gh { border-color:var(--g-line); color:var(--g) }
-.btn.gh:hover { background:var(--g-pale) }
-.btn.d { border-color:#B04040; color:#8C2020 }
-.btn.d:hover { background:#FFF0F0 }
-.btn.f { width:100% }
-.br { display:flex; gap:6px }
-
-/* Info */
-.info {
-  background:var(--bg2); border:1px solid var(--brd);
-  border-left:3px solid var(--g-line); padding:9px 11px;
-  font-family:var(--f-mono); font-size:8.5px; color:var(--ink3); line-height:1.85;
-}
-.info .ac { color:var(--g) } .info .hl { color:var(--ink2); font-weight:500 }
-
-/* Data cells */
-.dgrid { display:grid; grid-template-columns:1fr 1fr; gap:5px }
-.dc { background:var(--bg2); border:1px solid var(--brd); padding:7px 9px }
-.dcl { font-family:var(--f-mono); font-size:7.5px; color:var(--ink4); letter-spacing:1px; margin-bottom:2px }
-.dcv { font-family:var(--f-mono); font-size:14px; font-weight:500; color:var(--g) }
-
-/* Inputs */
-.inp { background:var(--surface); border:1px solid var(--brd); color:var(--ink);
-  font-family:var(--f-mono); font-size:10px; padding:5px 8px; outline:none; width:100% }
-.inp:focus { border-color:var(--g) }
-.inp-n { background:var(--surface); border:1px solid var(--brd); color:var(--g);
-  font-family:var(--f-mono); font-size:11px; font-weight:500;
-  padding:4px 6px; outline:none; text-align:right; width:100% }
-.inp-n:focus { border-color:var(--g) }
-select.sel { background:var(--surface); border:1px solid var(--brd); color:var(--ink);
-  font-family:var(--f-mono); font-size:9px; padding:5px 8px; outline:none; cursor:pointer }
-.sel:focus { border-color:var(--g) }
-
-/* Calib */
-.cb { background:var(--surface); border:1px solid var(--brd); padding:9px 11px; margin-bottom:5px }
-.cbn { font-family:var(--f-mono); font-size:9px; font-weight:500; color:var(--g); letter-spacing:1.5px; margin-bottom:7px }
-.cgr { display:grid; grid-template-columns:38px 1fr 28px; align-items:center; gap:6px; margin-bottom:4px }
-.clb { font-family:var(--f-mono); font-size:8px; color:var(--ink4) }
-.cu  { font-family:var(--f-mono); font-size:8px; color:var(--ink4) }
-
-/* Serial log */
-#slog { background:#0E0810; border:1px solid #28101C; padding:7px;
-  height:118px; overflow-y:auto; font-family:var(--f-mono); font-size:8.5px; line-height:1.7 }
-.s-tx { color:#C89098 } .s-rx { color:#6FBA8A }
-.s-er { color:#D07880 } .s-sy { color:#8AAAC0 }
-.fwcode { background:#0A0610; border:1px solid #28101C;
-  padding:8px; font-family:var(--f-mono); font-size:8px; color:#98C890;
-  line-height:1.55; overflow:auto; max-height:200px; white-space:pre }
-
-.srow { display:grid; grid-template-columns:56px 1fr 38px; align-items:center; gap:8px; padding:2px 0 }
-.sl { font-family:var(--f-mono); font-size:8px; color:var(--ink4) }
-
-/* Footer */
-.ft { font-family:var(--f-mono); font-size:8.5px; color:#C0A8B0; letter-spacing:.8px }
-.ft.d { color:#A09098 }
-#ft-ang { margin-left:auto; font-family:var(--f-mono); font-size:8.5px; color:#D8B8C0 }
-
-/* Modal */
-#modalbg { display:none; position:fixed; inset:0; background:#00000077; z-index:200;
-  align-items:center; justify-content:center }
-#modalbg.show { display:flex }
-.modal { background:var(--surface); border:1px solid var(--brd); border-top:3px solid var(--g);
-  max-width:460px; width:90%; padding:22px 24px; box-shadow:0 8px 40px #00000028 }
-.modal h3 { font-family:var(--f-display); font-size:16px; color:var(--g); margin-bottom:10px }
-.modal p  { font-family:var(--f-mono); font-size:9px; color:var(--ink2);
-  line-height:1.9; margin-bottom:16px; white-space:pre-wrap }
 </style>
 </head>
 <body>
 <div id="app">
-
-<!-- ══ HEADER ══════════════════════════════════════════ -->
 <header>
   <div class="crest">IPN</div>
   <div class="hdr-brand">
     <div class="hdr-title">Brazo Robótico — 5 Grados de Libertad</div>
-    <div class="hdr-sub">INSTITUTO POLITÉCNICO NACIONAL · SISTEMA DE CONTROL Y VISIÓN ARTIFICIAL</div>
+    <div class="hdr-sub">INSTITUTO POLITÉCNICO NACIONAL · CONTROL Y VISIÓN ARTIFICIAL v9</div>
   </div>
   <div class="hdr-sep"></div>
   <div class="hdr-keys"><b>Q/A</b> Base &ensp;<b>W/S</b> Hombro &ensp;<b>E/D</b> Codo &ensp;<b>R/F</b> Muñeca &ensp;<b>T/G</b> Pinza &ensp;<b>H</b> Guía</div>
-  <div class="chips">
-    <div class="chip" id="st-cam"><div class="dot"></div>WEBCAM</div>
-    <div class="chip" id="st-hand"><div class="dot"></div>MANOS</div>
+  <div class="chips" id="chips">
+    <div class="chip" id="st-cam"><div class="dot"></div>CAM</div>
+    <div class="chip" id="st-hand"><div class="dot"></div>PINZA</div>
     <div class="chip" id="st-pose"><div class="dot"></div>POSE</div>
     <div class="chip" id="st-serial"><div class="dot"></div>SERIAL</div>
   </div>
+  <button id="btn-sidebar-toggle" title="Abrir panel">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
 </header>
 
-<!-- ══ VIEWPORT ═══════════════════════════════════════ -->
 <div id="vp">
   <canvas id="three-canvas"></canvas>
 
   <div id="hud">
     <div class="hrow"><span>Base</span>   <span class="hv" id="h-base">0°</span></div>
-    <div class="hrow"><span>Hombro</span> <span class="hv" id="h-sho">75°</span></div>
-    <div class="hrow"><span>Codo</span>   <span class="hv" id="h-elb">40°</span></div>
+    <div class="hrow"><span>Hombro</span> <span class="hv" id="h-sho">90°</span></div>
+    <div class="hrow"><span>Codo</span>   <span class="hv" id="h-elb">20°</span></div>
     <div class="hrow"><span>Muñeca</span> <span class="hv" id="h-wri">0°</span></div>
     <div class="hrow"><span>Pinza</span>  <span class="hv" id="h-grip">5°</span></div>
   </div>
 
+  <!-- Amplification live display -->
+  <div id="amp-hud">
+    <div class="amp-row">
+      <span style="color:var(--ink4);width:44px">ELEV</span>
+      <div class="amp-bar-wrap"><div class="amp-bar" id="ab-elev" style="width:50%"></div></div>
+      <span class="amp-val" id="av-elev">—</span>
+    </div>
+    <div class="amp-row">
+      <span style="color:var(--ink4);width:44px">LATERAL</span>
+      <div class="amp-bar-wrap"><div class="amp-bar" id="ab-lat" style="width:50%"></div></div>
+      <span class="amp-val" id="av-lat">—</span>
+    </div>
+    <div class="amp-row">
+      <span style="color:var(--ink4);width:44px">CODO</span>
+      <div class="amp-bar-wrap"><div class="amp-bar" id="ab-elb" style="width:0%"></div></div>
+      <span class="amp-val" id="av-elb">—</span>
+    </div>
+    <div class="amp-row">
+      <span style="color:var(--ink4);width:44px">PINZA</span>
+      <div class="amp-bar-wrap"><div class="amp-bar" id="ab-grip" style="width:0%"></div></div>
+      <span class="amp-val" id="av-grip">—</span>
+    </div>
+  </div>
+
   <div id="kguide">
-    <span class="k">Q / A</span> Base &nbsp;&nbsp; <span class="k">W / S</span> Hombro<br>
-    <span class="k">E / D</span> Codo &nbsp;&nbsp; <span class="k">R / F</span> Muñeca<br>
-    <span class="k">T / G</span> Pinza &nbsp;&nbsp; <span class="k">0</span> Reset<br>
+    <span class="k">Q / A</span> Base &nbsp;&nbsp;&nbsp;<span class="k">W / S</span> Hombro<br>
+    <span class="k">E / D</span> Codo &nbsp;&nbsp;&nbsp;<span class="k">R / F</span> Muñeca<br>
+    <span class="k">T / G</span> Pinza &nbsp;&nbsp;<span class="k">0</span> Reset<br>
     <span class="k">H</span> Ocultar &ensp; Arrastrar = orbitar
   </div>
 
+  <div id="signal-bar">
+    <div class="sig-row"><span class="sig-name">POSE</span><div class="sig-gauge"><div class="sig-fill" id="sg-pose" style="width:0"></div></div><span class="sig-val" id="sv-pose">—</span></div>
+    <div class="sig-row"><span class="sig-name">PINZA</span><div class="sig-gauge"><div class="sig-fill" id="sg-grip" style="width:0"></div></div><span class="sig-val" id="sv-grip2">—</span></div>
+    <div class="sig-row"><span class="sig-name">VEL</span><div class="sig-gauge"><div class="sig-fill" id="sg-vel" style="width:0"></div></div><span class="sig-val" id="sv-vel">—</span></div>
+  </div>
+
+  <!-- DRAGGABLE Camera overlay -->
   <div id="cam-overlay">
     <div id="cam-hdr">
-      <span>SEGUIMIENTO CORPORAL</span>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span id="cam-mode-lbl" style="color:var(--ink4);font-size:7.5px">POSE+MANO</span>
-        <span class="cam-fps" id="cam-fps">— fps</span>
+      <div id="cam-hdr-left">
+        <span>⣿ SEGUIMIENTO</span>
+        <span class="cam-badge" id="cam-mode-lbl">POSE+PINZA</span>
+      </div>
+      <div id="cam-hdr-right">
+        <span style="font-family:var(--f-mono);font-size:8px;color:var(--g-mid);font-weight:500" id="cam-fps">— fps</span>
+        <button class="cam-ctrl-btn" id="btn-cam-minimize" title="Minimizar">—</button>
+        <button class="cam-ctrl-btn" id="btn-cam-snap" title="Anclar">⊡</button>
       </div>
     </div>
-    <div id="cam-wrap">
-      <video id="cam-video" autoplay muted playsinline></video>
-      <canvas id="cam-canvas"></canvas>
-    </div>
-    <div id="cam-toolbar">
-      <button class="ctool active" id="ct-skeleton" title="Esqueleto completo">ESQUEL</button>
-      <button class="ctool active" id="ct-angles"   title="Ángulos">ÁNGULOS</button>
-      <button class="ctool active" id="ct-hand"     title="Mano detalle">MANO</button>
-      <button class="ctool"        id="ct-labels"   title="Etiquetas landmarks">LBLS</button>
-      <button class="ctool"        id="ct-trail"    title="Rastro de movimiento">RASTRO</button>
-      <button class="ctool"        id="ct-depth"    title="Profundidad Z">PROF-Z</button>
-    </div>
-    <div class="cam-conf"><div class="fill" id="conf-bar"></div></div>
-    <div id="cam-stats-panel">
-      <div class="cam-stats-row">
-        <div class="cs">CONF<span id="cd-conf">—</span></div>
-        <div class="cs">CODO<span id="cd-elb">—</span></div>
-        <div class="cs">MUÑECA<span id="cd-wri">—</span></div>
-        <div class="cs">PINZA<span id="cd-grip">—</span></div>
+    <div id="cam-body">
+      <div id="cam-wrap">
+        <video id="cam-video" autoplay muted playsinline></video>
+        <canvas id="cam-canvas"></canvas>
+        <div id="pinch-badge">
+          <div id="pinch-dot"></div>
+          <span id="pinch-val">—</span>
+        </div>
+        <div id="cal-badge">⊙ CALIBRADO</div>
       </div>
-      <div class="cam-stats-row2">
-        <div class="cs">BASE<span id="cd-base">—</span></div>
-        <div class="cs">HOMBRO<span id="cd-sho">—</span></div>
-        <div class="cs">VEL<span id="cd-vel">— °/s</span></div>
+      <div id="cam-toolbar">
+        <button class="ctool active" id="ct-skeleton">ESQUEL</button>
+        <button class="ctool active" id="ct-pinch">PINZA</button>
+        <button class="ctool active" id="ct-angles">ÁNGULOS</button>
+        <button class="ctool" id="ct-labels">LBLS</button>
+        <button class="ctool" id="ct-trail">RASTRO</button>
+        <button class="ctool" id="ct-depth">PROF-Z</button>
       </div>
-    </div>
-    <div id="pose-map-wrap">
-      <div id="pose-map-label">
-        <span>MAPA ESQUELÉTICO</span>
-        <span id="pm-status" style="color:var(--ok)">—</span>
+      <div class="cam-conf"><div class="fill" id="conf-bar"></div></div>
+      <div id="cam-stats-panel">
+        <div class="cam-stats-row">
+          <div class="cs">CONF<span id="cd-conf">—</span></div>
+          <div class="cs">CODO<span id="cd-elb">—</span></div>
+          <div class="cs">MUÑECA<span id="cd-wri">—</span></div>
+          <div class="cs">PINZA<span id="cd-grip">—</span></div>
+        </div>
+        <div class="cam-stats-row2">
+          <div class="cs">BASE<span id="cd-base">—</span></div>
+          <div class="cs">HOMBRO<span id="cd-sho">—</span></div>
+          <div class="cs">VEL<span id="cd-vel">—</span></div>
+        </div>
       </div>
-      <canvas id="pose-map"></canvas>
+      <div id="pose-map-wrap">
+        <div id="pose-map-label">
+          <span>MAPA ESQUELÉTICO</span>
+          <span id="pm-status" style="color:var(--ok)">—</span>
+        </div>
+        <canvas id="pose-map"></canvas>
+      </div>
     </div>
   </div>
 
   <div id="logbox"></div>
 </div>
 
-<!-- ══ SIDEBAR ════════════════════════════════════════ -->
-<aside>
+<div id="aside-backdrop"></div>
+<aside id="sidebar">
   <div class="tabrow">
-    <div class="tab active" data-t="manual">MANUAL</div>
-    <div class="tab" data-t="vision">VISIÓN</div>
-    <div class="tab" data-t="calib">CALIB</div>
-    <div class="tab" data-t="arduino">ARDUINO</div>
+    <div class="tab active" data-t="manual"><span class="tab-icon">⚙</span><span class="tab-lbl">MANUAL</span></div>
+    <div class="tab" data-t="vision"><span class="tab-icon">◉</span><span class="tab-lbl">VISIÓN</span></div>
+    <div class="tab" data-t="calib"><span class="tab-icon">⊞</span><span class="tab-lbl">CALIB</span></div>
+    <div class="tab" data-t="arduino"><span class="tab-icon">⚡</span><span class="tab-lbl">ARDUINO</span></div>
   </div>
 
   <!-- MANUAL -->
@@ -425,21 +456,21 @@ select.sel { background:var(--surface); border:1px solid var(--brd); color:var(-
     <div class="sec">Control de Articulaciones</div>
     <div class="jb" id="jb-base">
       <div class="jr"><span class="jn">Base — Rotación horizontal</span><span class="jk">Q / A</span><span class="jv" id="lv-base">0°</span></div>
-      <input type="range" id="sl-base" min="-180" max="180" value="0" step="1">
-      <div class="jlim"><span id="lm-base-min">−180°</span><span id="lm-base-max">180°</span></div>
+      <input type="range" id="sl-base" min="-90" max="90" value="0" step="1">
+      <div class="jlim"><span id="lm-base-min">−90°</span><span id="lm-base-max">90°</span></div>
     </div>
     <div class="jb" id="jb-sho">
-      <div class="jr"><span class="jn">Hombro — Elevación</span><span class="jk">W / S</span><span class="jv" id="lv-sho">75°</span></div>
+      <div class="jr"><span class="jn">Hombro — Elevación</span><span class="jk">W / S</span><span class="jv" id="lv-sho">90°</span></div>
       <input type="range" id="sl-sho" min="0" max="180" value="90" step="1">
       <div class="jlim"><span id="lm-sho-min">0°</span><span id="lm-sho-max">180°</span></div>
     </div>
     <div class="jb" id="jb-elb">
-      <div class="jr"><span class="jn">Codo — Flexión</span><span class="jk">E / D</span><span class="jv" id="lv-elb">40°</span></div>
+      <div class="jr"><span class="jn">Codo — Flexión</span><span class="jk">E / D</span><span class="jv" id="lv-elb">20°</span></div>
       <input type="range" id="sl-elb" min="0" max="135" value="20" step="1">
       <div class="jlim"><span id="lm-elb-min">0°</span><span id="lm-elb-max">135°</span></div>
     </div>
     <div class="jb" id="jb-wri">
-      <div class="jr"><span class="jn">Muñeca — Rotación</span><span class="jk">R / F</span><span class="jv" id="lv-wri">0°</span></div>
+      <div class="jr"><span class="jn">Muñeca — Rotación axial</span><span class="jk">R / F</span><span class="jv" id="lv-wri">0°</span></div>
       <input type="range" id="sl-wri" min="-90" max="90" value="0" step="1">
       <div class="jlim"><span id="lm-wri-min">−90°</span><span id="lm-wri-max">90°</span></div>
     </div>
@@ -449,11 +480,11 @@ select.sel { background:var(--surface); border:1px solid var(--brd); color:var(-
       <div class="jlim"><span id="lm-grip-min">0°</span><span id="lm-grip-max">90°</span></div>
     </div>
     <div class="br">
-      <button class="btn f" id="btn-reset">Restablecer (0°)</button>
-      <button class="btn p" id="btn-home">HOME</button>
+      <button class="btn f" id="btn-reset">Restablecer a 0°</button>
+      <button class="btn p" id="btn-home">↺ HOME</button>
     </div>
     <div class="info">
-      <span class="hl">Modo manual activo.</span> Usa los sliders o el teclado para controlar cada articulación. Arrastra en el visor 3D para orbitar. Rueda del ratón = zoom.
+      <span class="hl">Modo manual.</span> Deslizadores o teclado para mover articulaciones. Arrastre en 3D para orbitar. Rueda para zoom.
     </div>
   </div>
 
@@ -461,49 +492,66 @@ select.sel { background:var(--surface); border:1px solid var(--brd); color:var(-
   <div class="pane" id="pane-vision">
     <div class="sec">Seguimiento por Cámara</div>
     <div class="info">
-      <span class="ac">MODO BRAZO VERTICAL → ROBOT HORIZONTAL</span><br>
-      Levanta tu brazo derecho <span class="hl">hacia arriba</span> para extender el robot horizontalmente. El <span class="hl">codo doblado</span> dobla el codo del robot. Mueve tu muñeca <span class="hl">izquierda/derecha</span> para girar la base. Abre y cierra la mano para controlar la <span class="hl">pinza</span> — todos los dedos son detectados.</div>
+      <span class="ac">Pulgar + Índice = Pinza.</span><br>
+      Levante el brazo derecho — el robot lo sigue con <span class="hl">movimiento amplificado</span>. Un poco de elevación = mucha respuesta del robot. Pulse <span class="hl">Calibrar Neutro</span> con el brazo en reposo.
+    </div>
     <div class="br">
-      <button class="btn p f" id="btn-cam-start">▶ Iniciar webcam</button>
+      <button class="btn p f" id="btn-cam-start">▶ Iniciar cámara</button>
       <button class="btn d" id="btn-cam-stop" style="display:none">■ Detener</button>
     </div>
     <div class="br">
+      <button class="btn gold f" id="btn-recal">⊙ Calibrar Neutro</button>
       <button class="btn f" id="btn-mirror" disabled style="opacity:.4">⇔ Espejo</button>
-      <button class="btn f" id="btn-calib-n" disabled style="opacity:.4">⊙ Fijar neutral</button>
     </div>
-    <div class="sec">Lecturas en tiempo real</div>
-    <div class="dgrid">
-      <div class="dc"><div class="dcl">CONFIANZA</div><div class="dcv" id="p-conf">—</div></div>
-      <div class="dc"><div class="dcl">DIST. PINZA</div><div class="dcv" id="p-grip">—</div></div>
-      <div class="dc"><div class="dcl">ÁNG. CODO</div><div class="dcv" id="p-elb">—</div></div>
-      <div class="dc"><div class="dcl">ÁNG. MUÑECA</div><div class="dcv" id="p-wri">—</div></div>
-      <div class="dc"><div class="dcl">ELEV. HOMBRO</div><div class="dcv" id="p-shy">—</div></div>
-      <div class="dc"><div class="dcl">ROT. BASE</div><div class="dcv" id="p-shx">—</div></div>
+    <div class="amp-info">
+      <span class="gold">Amplificación activa</span><br>
+      El robot mueve <span class="gold">2× más</span> que tu brazo real.<br>
+      Pequeño movimiento → gran respuesta.
     </div>
-    <div class="sec">Filtrado de señal</div>
+    <div class="sec">Amplificación de Movimiento</div>
     <div class="jb">
-      <div class="jr"><span class="jn">Suavizado EMA (α)</span><span class="jv" id="lv-smooth">0.93</span></div>
-      <input type="range" id="sl-smooth" min="0.30" max="0.97" value="0.93" step="0.01">
+      <div class="jr"><span class="jn">Amplificación Hombro</span><span class="jv" id="lv-amp-sho">2.0×</span></div>
+      <input type="range" id="sl-amp-sho" min="0.5" max="4.0" value="2.0" step="0.1">
+      <div class="jlim"><span>0.5× (fiel)</span><span>4.0× (máx)</span></div>
+    </div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Amplificación Base</span><span class="jv" id="lv-amp-base">1.8×</span></div>
+      <input type="range" id="sl-amp-base" min="0.3" max="3.5" value="1.8" step="0.1">
+      <div class="jlim"><span>0.3× (fino)</span><span>3.5× (amplio)</span></div>
+    </div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Amplificación Codo</span><span class="jv" id="lv-amp-elb">1.5×</span></div>
+      <input type="range" id="sl-amp-elb" min="0.5" max="3.0" value="1.5" step="0.1">
+      <div class="jlim"><span>0.5×</span><span>3.0×</span></div>
+    </div>
+    <div class="sec">Filtrado de Señal</div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Suavizado EMA (α)</span><span class="jv" id="lv-smooth">0.82</span></div>
+      <input type="range" id="sl-smooth" min="0.30" max="0.97" value="0.82" step="0.01">
       <div class="jlim"><span>Reactivo</span><span>Muy suave</span></div>
     </div>
     <div class="jb">
-      <div class="jr"><span class="jn">Banda muerta (°)</span><span class="jv" id="lv-dead">2.5</span></div>
-      <input type="range" id="sl-dead" min="0" max="8" value="2.5" step="0.5">
+      <div class="jr"><span class="jn">Banda muerta (°)</span><span class="jv" id="lv-dead">1.0</span></div>
+      <input type="range" id="sl-dead" min="0" max="8" value="1.0" step="0.5">
       <div class="jlim"><span>Sin filtro</span><span>8°</span></div>
     </div>
-    <div class="sec">Sensibilidad por articulación</div>
-    <div class="srow"><span class="sl">Base</span>  <input type="range" id="se-base" min="0.1" max="2.0" value="0.55" step="0.05"> <span class="jv" id="sv-base" style="font-size:11px">0.55×</span></div>
-    <div class="srow"><span class="sl">Hombro</span><input type="range" id="se-sho"  min="0.1" max="2.0" value="0.65" step="0.05"><span class="jv" id="sv-sho"  style="font-size:11px">0.65×</span></div>
-    <div class="srow"><span class="sl">Codo</span>  <input type="range" id="se-elb"  min="0.1" max="2.0" value="0.75" step="0.05">  <span class="jv" id="sv-elb"  style="font-size:11px">0.75×</span></div>
-    <div class="srow"><span class="sl">Pinza</span> <input type="range" id="se-grip" min="0.2" max="3.0" value="0.90" step="0.05"> <span class="jv" id="sv-grip" style="font-size:11px">0.90×</span></div>
+    <div class="sec">Lecturas en tiempo real</div>
+    <div class="dgrid">
+      <div class="dc"><div class="dcl">CONFIANZA POSE</div><div class="dcv" id="p-conf">—</div></div>
+      <div class="dc"><div class="dcl">PINZA</div><div class="dcv" id="p-grip">—</div></div>
+      <div class="dc"><div class="dcl">ELEVACIÓN</div><div class="dcv" id="p-shy">—</div></div>
+      <div class="dc"><div class="dcl">LATERAL</div><div class="dcv" id="p-shx">—</div></div>
+      <div class="dc"><div class="dcl">ÁNG. CODO</div><div class="dcv" id="p-elb">—</div></div>
+      <div class="dc"><div class="dcl">ROT. MUÑECA</div><div class="dcv" id="p-wri">—</div></div>
+    </div>
   </div>
 
   <!-- CALIB -->
   <div class="pane" id="pane-calib">
     <div class="sec">Límites Físicos del Robot</div>
-    <div class="info">Define los ángulos máximos del hardware para <span class="ac">proteger los servomotores</span>. Los controles y la visión quedan restringidos a estos valores.</div>
+    <div class="info">Defina los ángulos límite del hardware para <span class="ac">proteger los servomotores</span>.</div>
     <div id="calib-wrap"></div>
-    <div class="sec">Operaciones</div>
+    <div class="sec">Operaciones de Calibración</div>
     <div class="br">
       <button class="btn p f" id="btn-save-cal">Guardar calibración</button>
       <button class="btn gh" id="btn-load-cal">Cargar</button>
@@ -524,25 +572,24 @@ select.sel { background:var(--surface); border:1px solid var(--brd); color:var(-
         <option value="57600">57 600 baud</option>
         <option value="115200" selected>115 200 baud</option>
       </select>
-      <button class="btn p" id="btn-conn" style="min-width:96px">⚡ Conectar</button>
+      <button class="btn p" id="btn-conn" style="min-width:90px">⚡ Conectar</button>
     </div>
     <div class="info">
       <span class="ac">Puerto:</span> <span id="port-name">—</span><br>
       <span class="ac">Estado:</span> <span id="serial-txt">Desconectado</span><br>
-      <span class="ac">TX:</span> <span class="hl">B:90,H:45,C:60,W:0,G:30\n</span><br>
-      <span class="ac">RX:</span> <span class="hl">OK B:90 H:45 ... / PONG</span>
+      <span class="ac">Protocolo TX:</span> <span class="hl">B:90,H:45,C:60,W:0,G:30\n</span>
     </div>
     <div class="br">
       <button class="btn f" id="btn-home-ser" disabled style="opacity:.4">↺ Enviar HOME</button>
       <button class="btn f" id="btn-ping"     disabled style="opacity:.4">⚡ PING</button>
     </div>
-    <div class="sec">Frecuencia de transmisión</div>
+    <div class="sec">Frecuencia de Transmisión</div>
     <div class="jb">
       <div class="jr"><span class="jn">Frecuencia</span><span class="jv" id="lv-hz">20 Hz</span></div>
       <input type="range" id="sl-hz" min="1" max="50" value="20" step="1">
       <div class="jlim"><span>1 Hz</span><span>50 Hz</span></div>
     </div>
-    <div class="sec">Consola serial</div>
+    <div class="sec">Consola Serial</div>
     <div id="slog"></div>
     <div class="br" style="margin-top:4px">
       <input type="text" class="inp" id="inp-cmd" placeholder="B:90,H:45,C:45,W:0,G:0" style="flex:1">
@@ -554,21 +601,26 @@ select.sel { background:var(--surface); border:1px solid var(--brd); color:var(-
     <button class="btn gh f" id="btn-copy-fw" style="margin-top:4px">Copiar firmware al portapapeles</button>
     <div class="info" style="margin-top:4px">
       <span class="hl">Pines:</span> Base=<span class="ac">3</span> Hombro=<span class="ac">5</span> Codo=<span class="ac">6</span> Muñeca=<span class="ac">9</span> Pinza=<span class="ac">10</span><br>
-      Requiere <span class="ac">Chrome / Edge ≥ 89</span> sobre HTTPS o localhost.
+      Requiere <span class="ac">Chrome / Edge ≥ 89</span> en HTTPS o localhost.
     </div>
   </div>
 </aside>
 
-<!-- FOOTER -->
 <footer>
-  <span class="ft">RoboArm IPN v4.0</span>
+  <span class="ft">RoboArm IPN v9.0</span>
   <span class="ft d" id="ft-mode">Modo: Manual</span>
   <span class="ft d" id="ft-ser">Serial: —</span>
-  <span id="ft-ang">B:0° H:75° C:40° W:0° G:5°</span>
+  <span id="ft-ang">B:0° H:90° C:20° W:0° G:5°</span>
 </footer>
 </div>
 
-<!-- MODAL -->
+<nav id="nav-bar">
+  <button class="nav-btn active" data-t="manual"><span class="ni">⚙</span><span class="nl">MANUAL</span></button>
+  <button class="nav-btn" data-t="vision"><span class="ni">◉</span><span class="nl">VISIÓN</span></button>
+  <button class="nav-btn" data-t="calib"><span class="ni">⊞</span><span class="nl">CALIB</span></button>
+  <button class="nav-btn" data-t="arduino"><span class="ni">⚡</span><span class="nl">ARDUINO</span></button>
+</nav>
+
 <div id="modalbg">
   <div class="modal">
     <h3 id="modal-t">Aviso</h3>
@@ -577,36 +629,32 @@ select.sel { background:var(--surface); border:1px solid var(--brd); color:var(-
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════ FIRMWARE -->
 <script>
-const FW = `// ════════════════════════════════════════════════════════
+const FW = `// ═══════════════════════════════════════════════════════
 //  RoboArm IPN — Firmware v2.1
 //  RX: B:90,H:45,C:60,W:0,G:30\\n
 //  TX: OK B:90 H:45 C:60 W:0 G:30\\n  |  PONG
-// ════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 #include <Servo.h>
 #define PIN_BASE 3  #define PIN_SHOULDER 5  #define PIN_ELBOW 6
 #define PIN_WRIST 9  #define PIN_GRIPPER 10
 
 Servo sB, sH, sC, sW, sG;
-struct St { int b=90,h=45,c=45,w=90,g=0; } cur,tgt;
+struct St { int b=90,h=90,c=20,w=90,g=0; } cur,tgt;
 String buf="";
 
 void setup(){
   Serial.begin(115200);
   sB.attach(PIN_BASE); sH.attach(PIN_SHOULDER); sC.attach(PIN_ELBOW);
   sW.attach(PIN_WRIST); sG.attach(PIN_GRIPPER);
-  applyServos(cur);
-  Serial.println("READY IPN-RoboArm v2.1");
+  applyServos(cur); Serial.println("READY IPN-RoboArm v2.1");
 }
-
 void loop(){
   while(Serial.available()){
     char c=(char)Serial.read();
     if(c=='\\n'){ parseCmd(buf); buf=""; } else if(buf.length()<64) buf+=c;
   }
 }
-
 void parseCmd(String cmd){
   cmd.trim(); if(!cmd.length()) return;
   if(cmd=="PING"){ Serial.println("PONG"); return; }
@@ -636,7 +684,6 @@ void parseCmd(String cmd){
     Serial.print(" G:"); Serial.println(cur.g);
   }
 }
-
 void smoothMove(St &fr,St &to,int steps,int dly){
   for(int i=1;i<=steps;i++){
     St m;
@@ -652,393 +699,573 @@ void applyServos(St &s){
 document.getElementById('fw').textContent = FW;
 </script>
 
-<!-- ══════════════════════════════════════════════════ STATE -->
+<!-- STATE -->
 <script>
 const JDEFS = [
-  { key:'base', min:-180, max:180,  def:0,   lbl:'BASE'   },
-  { key:'sho',  min:0,    max:180,  def:90,  lbl:'HOMBRO' },
-  { key:'elb',  min:0,    max:135,  def:20,  lbl:'CODO'   },
-  { key:'wri',  min:-90,  max:90,   def:0,   lbl:'MUÑECA' },
-  { key:'grip', min:0,    max:90,   def:5,   lbl:'PINZA'  },
+  { key:'base', min:-90,  max:90,   def:0,  lbl:'BASE'   },
+  { key:'sho',  min:0,    max:180,  def:90, lbl:'HOMBRO' },
+  { key:'elb',  min:0,    max:135,  def:20, lbl:'CODO'   },
+  { key:'wri',  min:-90,  max:90,   def:0,  lbl:'MUÑECA' },
+  { key:'grip', min:0,    max:90,   def:5,  lbl:'PINZA'  },
 ];
 const J = {};
 JDEFS.forEach(d => J[d.key] = { v:d.def, calMin:d.min, calMax:d.max });
 
-const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
 const toRad = d => d * Math.PI / 180;
 const lerp  = (a,b,t) => a + (b-a)*t;
 
 function setJoint(key, val){
   J[key].v = clamp(val, J[key].calMin, J[key].calMax);
-  applyArm();
-  refreshUI();
+  applyArm(); refreshUI();
 }
 </script>
 
-<!-- ══════════════════════════════════════════════════ THREE.JS -->
+<!-- THREE.JS — PREMIUM ARM v9 -->
 <script>
-const c3 = document.getElementById('three-canvas');
-const vp  = document.getElementById('vp');
+const c3   = document.getElementById('three-canvas');
+const vpEl = document.getElementById('vp');
 
-const renderer = new THREE.WebGLRenderer({canvas:c3, antialias:true, alpha:true});
+const renderer = new THREE.WebGLRenderer({canvas:c3, antialias:true});
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 1.12;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xF0EAE0);
-scene.fog = new THREE.Fog(0xEDE5D8, 18, 32);
+scene.background = new THREE.Color(0xEAE4DA);
+scene.fog = new THREE.Fog(0xE4DED4, 22, 42);
 
-const cam3 = new THREE.PerspectiveCamera(40, 1, 0.05, 60);
-cam3.position.set(5, 3.2, 6);
-cam3.lookAt(1.8, 1.0, 0);
+const cam3 = new THREE.PerspectiveCamera(36, 1, 0.05, 60);
+cam3.position.set(6, 4, 8);
 
-// ── Luces — para guinda+oro+plata ──────────────────
-scene.add(new THREE.AmbientLight(0xF0E8D8, 0.75));
-const sunL = new THREE.DirectionalLight(0xFFF8F0, 1.5);
-sunL.position.set(6, 10, 5); sunL.castShadow = true;
+// ── Lights ───────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xF2EEE4, 0.72));
+const sunL = new THREE.DirectionalLight(0xFFFAF0, 1.80);
+sunL.position.set(8, 14, 6); sunL.castShadow = true;
 sunL.shadow.mapSize.set(2048,2048);
-sunL.shadow.camera.near = 0.1; sunL.shadow.camera.far = 30;
-sunL.shadow.bias = -0.0005;
+sunL.shadow.camera.near = 0.1; sunL.shadow.camera.far = 36;
+sunL.shadow.bias = -0.0004;
 scene.add(sunL);
-const rimL = new THREE.DirectionalLight(0xFFD890, 0.60); // luz dorada desde atrás
-rimL.position.set(4, 3, -4); scene.add(rimL);
-const fillL = new THREE.DirectionalLight(0xD0E8FF, 0.35); // luz fría para plata
-fillL.position.set(-5, 2, 2); scene.add(fillL);
-const glow = new THREE.PointLight(0x8C1428, 0.7, 10); // guinda glow
-glow.position.set(0, 3, 5); scene.add(glow);
-const goldL = new THREE.PointLight(0xC8900A, 0.5, 8); // luz dorada desde arriba
-goldL.position.set(2, 6, 1); scene.add(goldL);
+const rimL = new THREE.DirectionalLight(0xFFD070, 0.80);
+rimL.position.set(-5, 5, -4); scene.add(rimL);
+const fillL = new THREE.DirectionalLight(0xC8DCFF, 0.30);
+fillL.position.set(-7, 2, 3); scene.add(fillL);
+const glowL = new THREE.PointLight(0x8C1428, 1.0, 14);
+glowL.position.set(0, 4, 5); scene.add(glowL);
+const goldL = new THREE.PointLight(0xC88018, 0.70, 11);
+goldL.position.set(2, 8, 1); scene.add(goldL);
+const underL = new THREE.PointLight(0x300810, 0.30, 10);
+underL.position.set(0, -1, 2); scene.add(underL);
 
-// ── Suelo — claro ────────────────────────────────────
-const grid = new THREE.GridHelper(16, 32, 0xC8B8A8, 0xDDD0C0);
+// ── Ground plane ──────────────────────────────────────────
+const grid = new THREE.GridHelper(24, 48, 0xC0AFA0, 0xD8CEC0);
+grid.material.opacity = 0.55; grid.material.transparent = true;
 scene.add(grid);
-const gnd = new THREE.Mesh(new THREE.PlaneGeometry(16,16),
-  new THREE.MeshStandardMaterial({color:0xE8DDD0, roughness:0.85, metalness:0.0}));
+const gnd = new THREE.Mesh(
+  new THREE.PlaneGeometry(24,24),
+  new THREE.MeshStandardMaterial({color:0xE4D8CC, roughness:0.90, metalness:0.02})
+);
 gnd.rotation.x = -Math.PI/2; gnd.receiveShadow = true; scene.add(gnd);
 
-// ── Materiales — GUINDA DOMINANTE + ORO + PLATA ─────
-// Guinda IPN como color principal del brazo
-// Oro: juntas, anillos, detalles calientes
-// Plata: elementos estructurales, tapas, screws
-const mBone    = new THREE.MeshStandardMaterial({color:0x7A1022, metalness:0.55, roughness:0.30,
-  emissive:0x280408, emissiveIntensity:0.10}); // GUINDA — tubos principales
-const mIvory   = new THREE.MeshStandardMaterial({color:0x8C1830, metalness:0.50, roughness:0.32,
-  emissive:0x2A0508, emissiveIntensity:0.08}); // GUINDA CLARO — dedos de pinza
-const mGold    = new THREE.MeshStandardMaterial({color:0xD4A840, metalness:0.92, roughness:0.12,
-  emissive:0x402808, emissiveIntensity:0.06}); // ORO brillante — juntas primarias
-const mGoldDk  = new THREE.MeshStandardMaterial({color:0xA87828, metalness:0.88, roughness:0.18}); // ORO oscuro
-const mSilver  = new THREE.MeshStandardMaterial({color:0xC8C4C0, metalness:0.85, roughness:0.14}); // PLATA — estructural
-const mGuinda  = new THREE.MeshStandardMaterial({color:0x6E0F1E, metalness:0.62, roughness:0.22,
-  emissive:0x300410, emissiveIntensity:0.15}); // GUINDA OSCURO — base y detalles
-const mGuindaDk= new THREE.MeshStandardMaterial({color:0x480A12, metalness:0.78, roughness:0.18}); // GUINDA PROFUNDO
-const mJoint   = new THREE.MeshStandardMaterial({color:0xD4A840, metalness:0.78, roughness:0.15,
-  emissive:0x3A2008, emissiveIntensity:0.07}); // ORO — esferas de articulación
-const mDark    = new THREE.MeshStandardMaterial({color:0x1E1818, metalness:0.88, roughness:0.14}); // NEGRO — interior
-const mServo   = new THREE.MeshStandardMaterial({color:0x2A1A1E, metalness:0.82, roughness:0.12,
-  emissive:0x100408, emissiveIntensity:0.05}); // NEGRO + guinda — servos
-const mTip     = new THREE.MeshStandardMaterial({color:0xB83048, metalness:0.45, roughness:0.38}); // GUINDA CLARO — puntas
-const mRubber  = new THREE.MeshStandardMaterial({color:0x160C0E, metalness:0.04, roughness:0.94}); // NEGRO MATE — goma
-const mAccent  = new THREE.MeshStandardMaterial({color:0xD4A840, metalness:0.90, roughness:0.14}); // ORO — anillos y acentos
+// ── MATERIAL PALETTE ──────────────────────────────────────
+const M = {
+  // Body guinda tones
+  body:    new THREE.MeshStandardMaterial({color:0x780E1C, metalness:0.58, roughness:0.26, emissive:0x1A0304, emissiveIntensity:0.10}),
+  body2:   new THREE.MeshStandardMaterial({color:0x6E0C18, metalness:0.55, roughness:0.28, emissive:0x180204, emissiveIntensity:0.08}),
+  bodyDk:  new THREE.MeshStandardMaterial({color:0x500910, metalness:0.65, roughness:0.22, emissive:0x120204, emissiveIntensity:0.12}),
+  bodyHi:  new THREE.MeshStandardMaterial({color:0x9C1832, metalness:0.48, roughness:0.32, emissive:0x260408, emissiveIntensity:0.06}),
+  // Gold accents
+  gold:    new THREE.MeshStandardMaterial({color:0xD4A830, metalness:0.96, roughness:0.07, emissive:0x3C2006, emissiveIntensity:0.04}),
+  goldDk:  new THREE.MeshStandardMaterial({color:0xA87820, metalness:0.92, roughness:0.12}),
+  goldBrt: new THREE.MeshStandardMaterial({color:0xF0C84A, metalness:0.98, roughness:0.04}),
+  // Silver structural
+  silver:  new THREE.MeshStandardMaterial({color:0xD8D6D0, metalness:0.90, roughness:0.10}),
+  silver2: new THREE.MeshStandardMaterial({color:0xC0BEB8, metalness:0.84, roughness:0.15}),
+  silverDk:new THREE.MeshStandardMaterial({color:0xA8A4A0, metalness:0.80, roughness:0.20}),
+  // Mechanical dark
+  dark:    new THREE.MeshStandardMaterial({color:0x141010, metalness:0.92, roughness:0.10}),
+  servo:   new THREE.MeshStandardMaterial({color:0x201418, metalness:0.86, roughness:0.10, emissive:0x060204, emissiveIntensity:0.04}),
+  // Gripper
+  jaw:     new THREE.MeshStandardMaterial({color:0x8C182E, metalness:0.60, roughness:0.20, emissive:0x200306, emissiveIntensity:0.08}),
+  jawTip:  new THREE.MeshStandardMaterial({color:0xC04050, metalness:0.42, roughness:0.32}),
+  rubber:  new THREE.MeshStandardMaterial({color:0x0C0A10, metalness:0.01, roughness:0.98}),
+  // Accent & LED
+  accent:  new THREE.MeshStandardMaterial({color:0x680C18, metalness:0.72, roughness:0.18, emissive:0x1C0304, emissiveIntensity:0.20}),
+  ledRed:  new THREE.MeshStandardMaterial({color:0xCC2040, emissive:0xCC2040, emissiveIntensity:1.0, roughness:0.2, metalness:0.1}),
+  ledGold: new THREE.MeshStandardMaterial({color:0xD4A030, emissive:0xD4A030, emissiveIntensity:0.9, roughness:0.2}),
+  ledBlue: new THREE.MeshStandardMaterial({color:0x4080CC, emissive:0x4080CC, emissiveIntensity:0.8, roughness:0.2}),
+  chromeDk:new THREE.MeshStandardMaterial({color:0x282428, metalness:0.95, roughness:0.06}),
+};
 
-function mk(geo,mat,cs=true){ const m=new THREE.Mesh(geo,mat); m.castShadow=cs; m.receiveShadow=true; return m }
-function cy(rT,rB,h,s,mat){ return mk(new THREE.CylinderGeometry(rT,rB,h,s),mat) }
-function bx(w,h,d,mat){ return mk(new THREE.BoxGeometry(w,h,d),mat) }
-function sp(r,mat){ return mk(new THREE.SphereGeometry(r,20,14),mat) }
-// Torus rings for joint details
-function tor(R,r,mat){ return mk(new THREE.TorusGeometry(R,r,10,20),mat) }
+const mk  = (g,m,cs=true)=>{ const o=new THREE.Mesh(g,m); o.castShadow=cs; o.receiveShadow=true; return o; };
+const cy  = (rT,rB,h,s,m)=>mk(new THREE.CylinderGeometry(rT,rB,h,s),m);
+const bx  = (w,h,d,m)    =>mk(new THREE.BoxGeometry(w,h,d),m);
+const sp  = (r,m)         =>mk(new THREE.SphereGeometry(r,22,14),m);
+const tor = (R,r,m,ts,rs) =>mk(new THREE.TorusGeometry(R,r,ts||12,rs||36),m);
+const cone= (r,h,s,m)     =>mk(new THREE.ConeGeometry(r,h,s),m);
 
-// ════════════════════════════════════════════════════════
-// BASE PLATFORM
-// ════════════════════════════════════════════════════════
-const basePlatformOut = cy(0.82, 0.92, 0.12, 24, mSilver);
-basePlatformOut.position.y = 0.06; scene.add(basePlatformOut);
-const basePlatformTop = cy(0.78, 0.78, 0.04, 24, mAccent);
-basePlatformTop.position.y = 0.14; scene.add(basePlatformTop);
+// ══════════════════════════════════════════════════════════
+// GROUND PLATFORM BASE — Precision machined octagonal base
+// ══════════════════════════════════════════════════════════
+// Outer flange ring — 8-sided
+const outerFlange = cy(1.36, 1.28, 0.06, 8, M.silverDk); outerFlange.position.y=0.03; scene.add(outerFlange);
+// Chamfered outer edge
+const outerChamfer = cy(1.30, 1.36, 0.04, 8, M.silver2); outerChamfer.position.y=0.07; scene.add(outerChamfer);
 
-// Mounting screws (decorative)
-for(let i=0;i<6;i++){
-  const a = (i/6)*Math.PI*2;
-  const screw = cy(0.024,0.024,0.06,8,mDark);
-  screw.position.set(Math.cos(a)*0.65, 0.09, Math.sin(a)*0.65);
-  scene.add(screw);
+// 8 Foot pads with rubber grippers
+for(let i=0;i<8;i++){
+  const a=(i/8)*Math.PI*2+Math.PI/8;
+  const r=1.18;
+  // Mounting stud
+  const stud=cy(0.065,0.065,0.055,8,M.dark); stud.position.set(Math.cos(a)*r,0.027,Math.sin(a)*r); scene.add(stud);
+  // Rubber pad
+  const pad=cy(0.080,0.090,0.022,8,M.rubber); pad.position.set(Math.cos(a)*r,-0.011,Math.sin(a)*r); scene.add(pad);
+  // Pad chamfer ring
+  const padRing=cy(0.078,0.072,0.008,8,M.chromeDk); padRing.position.set(Math.cos(a)*r,-0.018,Math.sin(a)*r); scene.add(padRing);
 }
 
-// ════════════════════════════════════════════════════════
-// BASE GROUP (rotates Y = base joint)
-// ════════════════════════════════════════════════════════
-const baseG = new THREE.Group();
-baseG.position.y = 0.14; scene.add(baseG);
+// Main base disk — stepped design
+const base1 = cy(1.22, 1.28, 0.12, 8, M.body); base1.position.y=0.14; scene.add(base1);
+const base2 = cy(1.10, 1.22, 0.10, 8, M.bodyDk); base2.position.y=0.25; scene.add(base2);
+const base3 = cy(1.00, 1.10, 0.10, 16, M.body); base3.position.y=0.35; scene.add(base3);
+const baseCap = cy(0.96, 1.00, 0.04, 16, M.bodyDk); baseCap.position.y=0.42; scene.add(baseCap);
 
-// Housing principal
-const housing = bx(0.90, 0.84, 0.74, mBone);
-housing.position.y = 0.42; baseG.add(housing);
-// Housing beveled edges (detail strips)
-[[-0.44,0.42,0,'z'],[0.44,0.42,0,'z']].forEach(([x,y,z,ax])=>{
-  const strip = bx(0.06, 0.80, 0.70, mSilver);
-  strip.position.set(x,y,z); baseG.add(strip);
-});
-[0,.84].forEach(y=>{
-  const cap = bx(0.88,0.04,0.72,mSilver); cap.position.y=y; baseG.add(cap);
-});
-// Servo windows
-[-0.30,0.30].forEach(z=>{
-  const win = bx(0.05,0.32,0.24,mServo); win.position.set(-0.47,0.42,z); baseG.add(win);
-  const win2= bx(0.05,0.32,0.24,mServo); win2.position.set( 0.47,0.42,z); baseG.add(win2);
-});
-// Gear/pulley pair
-[-0.22,0.22].forEach(z=>{
-  const gearOuter = cy(0.20,0.20,0.06,24,mSilver); gearOuter.rotation.z=Math.PI/2; gearOuter.position.set(0.47,0.36,z); baseG.add(gearOuter);
-  const gearInner = cy(0.10,0.10,0.07,16,mDark);   gearInner.rotation.z=Math.PI/2; gearInner.position.set(0.47,0.36,z); baseG.add(gearInner);
-  const gearRing  = tor(0.17,0.025,mGuinda);         gearRing.rotation.y=Math.PI/2;  gearRing.position.set(0.47,0.36,z); baseG.add(gearRing);
-});
-// Vertical post (shoulder mount)
-const post = cy(0.16,0.18,0.30,14,mBone); post.position.set(0,0.99,0); baseG.add(post);
-const postRing = tor(0.18,0.025,mGuinda); postRing.position.set(0,0.94,0); baseG.add(postRing);
-const postCap  = cy(0.18,0.16,0.04,14,mSilver); postCap.position.set(0,1.14,0); baseG.add(postCap);
-// IPN label plate
-const plate = bx(0.30,0.12,0.04,mGuinda); plate.position.set(0,0.54,0.38); baseG.add(plate);
+// Slewing ring bearing — the precision rotation interface
+const slewOuter = cy(1.06, 1.06, 0.055, 32, M.silver); slewOuter.position.y=0.43; scene.add(slewOuter);
+const slewInner = cy(0.96, 0.96, 0.065, 32, M.silverDk); slewInner.position.y=0.43; scene.add(slewInner);
+const slewGold  = tor(1.01, 0.020, M.goldBrt); slewGold.position.y=0.43; scene.add(slewGold);
+const slewGold2 = tor(1.01, 0.012, M.gold); slewGold2.position.y=0.46; scene.add(slewGold2);
 
-// ════════════════════════════════════════════════════════
-// SHOULDER PIVOT
-// ════════════════════════════════════════════════════════
-const shoP = new THREE.Group(); shoP.position.set(0,1.18,0); baseG.add(shoP);
+// Gold accent ring on base step
+const baseAccRing = tor(1.14, 0.024, M.gold); baseAccRing.position.y=0.25; scene.add(baseAccRing);
+const baseAccRing2 = tor(1.22, 0.018, M.goldDk); baseAccRing2.position.y=0.14; scene.add(baseAccRing2);
+
+// 8 precision bolt heads on base (allen cap screws)
+for(let i=0;i<8;i++){
+  const a=(i/8)*Math.PI*2;
+  const bolt=cy(0.038,0.038,0.06,6,M.dark); bolt.position.set(Math.cos(a)*0.78,0.26,Math.sin(a)*0.78); scene.add(bolt);
+  const top=cy(0.026,0.026,0.014,6,M.silverDk); top.position.set(Math.cos(a)*0.78,0.30,Math.sin(a)*0.78); scene.add(top);
+  // hex socket
+  const sock=cy(0.014,0.014,0.016,6,M.chromeDk); sock.position.set(Math.cos(a)*0.78,0.305,Math.sin(a)*0.78); scene.add(sock);
+}
+
+// Decorative vent slots on base sides (4 sides)
+for(let i=0;i<4;i++){
+  const a=(i/4)*Math.PI*2;
+  const vg=new THREE.Group(); vg.rotation.y=a; scene.add(vg);
+  for(let j=0;j<3;j++){
+    const slot=bx(0.22,0.018,0.028,M.chromeDk);
+    slot.position.set(0,0.18+j*0.045,1.12);
+    vg.add(slot);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// BASE ROTATING ASSEMBLY
+// ══════════════════════════════════════════════════════════
+const baseG = new THREE.Group(); baseG.position.y=0.46; scene.add(baseG);
+
+// Inner slewing plate
+const rotPlate = cy(0.94, 0.94, 0.04, 16, M.bodyDk); rotPlate.position.y=0.02; baseG.add(rotPlate);
+const rotRing  = tor(0.90, 0.018, M.accent); rotRing.position.y=0.04; baseG.add(rotRing);
+
+// Main turret housing — organic stepped cylinder
+const turret1 = cy(0.52, 0.58, 0.30, 12, M.body); turret1.position.y=0.17; baseG.add(turret1);
+const turret2 = cy(0.48, 0.52, 0.22, 12, M.bodyDk); turret2.position.y=0.42; baseG.add(turret2);
+const turret3 = cy(0.44, 0.48, 0.08, 12, M.body); turret3.position.y=0.57; baseG.add(turret3);
+
+// Turret gold rings
+const tRing1 = tor(0.52, 0.026, M.gold); tRing1.position.y=0.32; baseG.add(tRing1);
+const tRing2 = tor(0.48, 0.022, M.goldDk); tRing2.position.y=0.53; baseG.add(tRing2);
+const tCap   = cy(0.44, 0.44, 0.03, 12, M.gold); tCap.position.y=0.625; baseG.add(tCap);
+
+// 4 Vertical guide channels on turret
+for(let i=0;i<4;i++){
+  const a=(i/4)*Math.PI*2;
+  const ch=bx(0.032,0.45,0.052,M.bodyDk);
+  ch.position.set(Math.cos(a)*0.50,0.30,Math.sin(a)*0.50);
+  ch.rotation.y=a; baseG.add(ch);
+  // Channel edge strip
+  const cs=bx(0.008,0.45,0.056,M.accent);
+  cs.position.set(Math.cos(a)*0.52,0.30,Math.sin(a)*0.52);
+  cs.rotation.y=a; baseG.add(cs);
+}
+
+// Front servo assembly — prominent drive block
+const servoDrive=bx(0.28,0.32,0.22,M.servo); servoDrive.position.set(0,0.28,0.56); baseG.add(servoDrive);
+// Servo case detail
+const sdTop=bx(0.30,0.028,0.24,M.gold); sdTop.position.set(0,0.448,0.56); baseG.add(sdTop);
+const sdBot=bx(0.30,0.018,0.24,M.silverDk); sdBot.position.set(0,0.118,0.56); baseG.add(sdBot);
+// Servo gear (output shaft)
+const sdGear=cy(0.11,0.11,0.055,20,M.silver); sdGear.rotation.x=Math.PI/2; sdGear.position.set(0,0.28,0.695); baseG.add(sdGear);
+const sdGearHub=cy(0.055,0.055,0.07,10,M.dark); sdGearHub.rotation.x=Math.PI/2; sdGearHub.position.set(0,0.28,0.70); baseG.add(sdGearHub);
+const sdGearRing=tor(0.10,0.018,M.gold); sdGearRing.rotation.x=Math.PI/2; sdGearRing.position.set(0,0.28,0.696); baseG.add(sdGearRing);
+// Connector port
+const connPort=bx(0.09,0.055,0.030,M.chromeDk); connPort.position.set(0.16,0.195,0.68); baseG.add(connPort);
+
+// IPN Logo plate
+const logoFrame=bx(0.28,0.110,0.025,M.bodyDk); logoFrame.position.set(0,0.36,0.578); baseG.add(logoFrame);
+const logoBg=bx(0.24,0.076,0.028,M.gold); logoBg.position.set(0,0.36,0.580); baseG.add(logoBg);
+const logoText=bx(0.20,0.044,0.030,M.dark); logoText.position.set(0,0.36,0.582); baseG.add(logoText);
+
+// Status LEDs (3) — Red, Gold, Blue
+[-0.064,0,0.064].forEach((x,i)=>{
+  const ledMat=[M.ledRed,M.ledGold,M.ledBlue][i];
+  const led=bx(0.028,0.028,0.028,ledMat); led.position.set(x,0.52,0.575); baseG.add(led);
+  // LED lens
+  const lens=bx(0.018,0.018,0.014,ledMat); lens.position.set(x,0.52,0.584); baseG.add(lens);
+});
+
+// Cable conduit housing on side
+const conduit=cy(0.058,0.058,0.44,8,M.chromeDk); conduit.position.set(0.56,0.22,0.08); baseG.add(conduit);
+const condRing1=tor(0.06,0.014,M.gold); condRing1.rotation.x=Math.PI/2; condRing1.position.set(0.56,0.06,0.08); baseG.add(condRing1);
+const condRing2=tor(0.06,0.014,M.gold); condRing2.rotation.x=Math.PI/2; condRing2.position.set(0.56,0.38,0.08); baseG.add(condRing2);
+
+// Neck transition — bell-shaped
+const neck1=cy(0.25,0.32,0.10,16,M.body); neck1.position.set(0,0.67,0); baseG.add(neck1);
+const neck2=cy(0.22,0.25,0.22,14,M.bodyDk); neck2.position.set(0,0.83,0); baseG.add(neck2);
+const neckGold=tor(0.26,0.025,M.gold); neckGold.position.set(0,0.72,0); baseG.add(neckGold);
+const neckAcc=tor(0.24,0.020,M.accent); neckAcc.position.set(0,0.94,0); baseG.add(neckAcc);
+const neckCap=cy(0.24,0.24,0.038,14,M.silver); neckCap.position.set(0,0.96,0); baseG.add(neckCap);
+
+// ══════════════════════════════════════════════════════════
+// SHOULDER PIVOT — Precision cross-roller bearing joint
+// ══════════════════════════════════════════════════════════
+const shoP = new THREE.Group(); shoP.position.set(0,1.00,0); baseG.add(shoP);
 const shoG = new THREE.Group(); shoP.add(shoG);
 
-// Shoulder joint sphere with rings
-const shoSph = sp(0.22, mJoint); shoG.add(shoSph);
-const shoRing1 = tor(0.22,0.03,mGuinda); shoG.add(shoRing1);
-const shoRing2 = tor(0.22,0.03,mGuindaDk); shoRing2.rotation.x=Math.PI/2; shoG.add(shoRing2);
-// Shoulder axle
-const shoAx = cy(0.055,0.055,0.76,10,mDark); shoAx.rotation.z=Math.PI/2; shoG.add(shoAx);
-// Axle caps
-[-0.38,0.38].forEach(x=>{ const c=cy(0.09,0.09,0.05,12,mSilver); c.rotation.z=Math.PI/2; c.position.x=x; shoG.add(c); });
+// Shoulder sphere — gold core bearing
+const shoSph = sp(0.26, M.gold); shoG.add(shoSph);
+const shoInner = sp(0.20, M.dark); shoG.add(shoInner);
 
-// ════════════════════════════════════════════════════════
-// ARM 1 — main long arm (horizontal, extends along +Z)
-// ════════════════════════════════════════════════════════
+// Cross rings (X/Z planes)
+const shoRingX = tor(0.26,0.032,M.body); shoG.add(shoRingX);
+const shoRingZ = tor(0.26,0.032,M.bodyDk); shoRingZ.rotation.x=Math.PI/2; shoG.add(shoRingZ);
+// Gold accent rings
+const shoGoldX = tor(0.27,0.016,M.goldBrt); shoG.add(shoGoldX);
+const shoGoldZ = tor(0.27,0.016,M.gold); shoGoldZ.rotation.x=Math.PI/2; shoG.add(shoGoldZ);
+
+// Main axle — hollow with detail
+const shoAxle=cy(0.060,0.060,0.96,12,M.dark); shoAxle.rotation.z=Math.PI/2; shoG.add(shoAxle);
+// Axle end caps
+[-0.46,0.46].forEach(x=>{
+  const cap=cy(0.110,0.110,0.055,12,M.silver); cap.rotation.z=Math.PI/2; cap.position.x=x; shoG.add(cap);
+  const capRing=tor(0.100,0.018,M.gold); capRing.rotation.y=Math.PI/2; capRing.position.x=x; shoG.add(capRing);
+  const inner=cy(0.062,0.062,0.065,8,M.dark); inner.rotation.z=Math.PI/2; inner.position.x=x; shoG.add(inner);
+});
+
+// Shoulder bracket housing — wider, double-wall
+const shoHous=bx(0.50,0.44,0.32,M.body); shoHous.position.set(0.54,0,0); shoG.add(shoHous);
+const shoHTop=bx(0.54,0.030,0.34,M.gold); shoHTop.position.set(0.54,0.235,0); shoG.add(shoHTop);
+const shoHBot=bx(0.54,0.020,0.34,M.silver2); shoHBot.position.set(0.54,-0.235,0); shoG.add(shoHBot);
+// Housing vent slots
+for(let j=0;j<3;j++){
+  const sv=bx(0.42,0.025,0.055,M.chromeDk); sv.position.set(0.54,0.10-j*0.10,0.16); shoG.add(sv);
+}
+// Motor output gear visible on housing
+const shoGear=cy(0.085,0.085,0.065,18,M.silver); shoGear.rotation.z=Math.PI/2; shoGear.position.set(0.72,0,0); shoG.add(shoGear);
+const shoGearHub=cy(0.048,0.048,0.08,8,M.dark); shoGearHub.rotation.z=Math.PI/2; shoGearHub.position.set(0.73,0,0); shoG.add(shoGearHub);
+const shoGearAcc=tor(0.080,0.016,M.accent); shoGearAcc.rotation.y=Math.PI/2; shoGearAcc.position.set(0.72,0,0); shoG.add(shoGearAcc);
+
+// ══════════════════════════════════════════════════════════
+// UPPER ARM — Precision D-profile with integrated cable duct
+// ══════════════════════════════════════════════════════════
 const arm1 = new THREE.Group(); shoG.add(arm1);
 
-// Main tube — tapered bone/ivory
-const a1tube = cy(0.105,0.148,3.20,12,mBone); a1tube.rotation.x=Math.PI/2; a1tube.position.z=1.60; arm1.add(a1tube);
-// Inner dark channel
-const a1inn = cy(0.068,0.090,3.15,10,mDark); a1inn.rotation.x=Math.PI/2; a1inn.position.z=1.60; arm1.add(a1inn);
-// Mounting bracket at shoulder end
-const bk1 = bx(0.38,0.36,0.26,mBone); bk1.position.z=0.13; arm1.add(bk1);
-const bk1rim = bx(0.42,0.04,0.28,mSilver); bk1rim.position.set(0,0.18,0.13); arm1.add(bk1rim);
-const bk1bot = bx(0.42,0.04,0.28,mSilver); bk1bot.position.set(0,-0.18,0.13); arm1.add(bk1bot);
-// Cable guide rings along tube
-[0.55, 1.10, 1.65, 2.20, 2.78].forEach((z,i)=>{
-  const rg = cy(0.168,0.168,0.046,14,i%2===0?mSilver:mAccent);
-  rg.rotation.x=Math.PI/2; rg.position.z=z; arm1.add(rg);
-  const rgIn = cy(0.130,0.130,0.050,14,mDark);
-  rgIn.rotation.x=Math.PI/2; rgIn.position.z=z; arm1.add(rgIn);
-});
-// Engraved stripe detail
-const stripe1 = bx(0.02,0.26,3.12,mGuinda); stripe1.position.set(0.11,0.0,1.60); arm1.add(stripe1);
+// Main structural tube — elliptical cross-section
+const a1Main = cy(0.130,0.168,3.10,18,M.body); a1Main.rotation.x=Math.PI/2; a1Main.position.z=1.55; arm1.add(a1Main);
+// Inner hollow core
+const a1Core = cy(0.080,0.105,3.06,14,M.bodyDk); a1Core.rotation.x=Math.PI/2; a1Core.position.z=1.55; arm1.add(a1Core);
+// Top cable management channel
+const a1Cable = bx(0.15,0.040,3.04,M.silver2); a1Cable.position.set(0,0.17,1.55); arm1.add(a1Cable);
+const a1CableEdge = bx(0.16,0.012,3.04,M.gold); a1CableEdge.position.set(0,0.190,1.55); arm1.add(a1CableEdge);
 
-// ════════════════════════════════════════════════════════
-// ELBOW PIVOT
-// ════════════════════════════════════════════════════════
-const elbP = new THREE.Group(); elbP.position.z=3.20; arm1.add(elbP);
+// Shoulder bracket
+const a1Bk=bx(0.50,0.44,0.30,M.body); a1Bk.position.z=0.15; arm1.add(a1Bk);
+const a1BkGold=bx(0.54,0.026,0.32,M.gold); a1BkGold.position.set(0,0.235,0.15); arm1.add(a1BkGold);
+const a1BkSilver=bx(0.54,0.020,0.32,M.silver2); a1BkSilver.position.set(0,-0.235,0.15); arm1.add(a1BkSilver);
+
+// Lateral guinda accent stripes (industrial aesthetic)
+const a1StrL=bx(0.018,0.28,3.06,M.accent); a1StrL.position.set(0.128,0,1.55); arm1.add(a1StrL);
+const a1StrR=bx(0.018,0.28,3.06,M.accent); a1StrR.position.set(-0.128,0,1.55); arm1.add(a1StrR);
+
+// Structural rings — alternating gold/silver with relief detail
+[0.45,0.90,1.38,1.84,2.32,2.76].forEach((z,i)=>{
+  const col = i%2===0 ? M.silver : M.gold;
+  const rg=cy(0.184,0.184,0.052,18,col); rg.rotation.x=Math.PI/2; rg.position.z=z; arm1.add(rg);
+  const ri=cy(0.136,0.136,0.058,14,M.chromeDk); ri.rotation.x=Math.PI/2; ri.position.z=z; arm1.add(ri);
+  // Stripe detail on ring face
+  const rs=cy(0.187,0.187,0.014,18,M.accent); rs.rotation.x=Math.PI/2; rs.position.set(0,0,z+0.025); arm1.add(rs);
+  // Cable screws on top
+  const sc=bx(0.022,0.022,0.022,M.dark); sc.position.set(0,0.185,z); arm1.add(sc);
+});
+
+// Side gussets for rigidity (4 positions)
+[0.68,1.62,2.56].forEach(z=>{
+  [-1,1].forEach(s=>{
+    const g=bx(0.052,0.26,0.085,M.bodyDk); g.position.set(s*0.138,0,z); arm1.add(g);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// ELBOW PIVOT — Double-flanged precision joint
+// ══════════════════════════════════════════════════════════
+const elbP = new THREE.Group(); elbP.position.z=3.10; arm1.add(elbP);
 const elbG = new THREE.Group(); elbP.add(elbG);
 
+// Elbow spherical bearing
+const elbSph=sp(0.225,M.gold); elbG.add(elbSph);
+const elbCore=sp(0.165,M.dark); elbG.add(elbCore);
+// Rings
+const elbRingX=tor(0.225,0.032,M.body); elbG.add(elbRingX);
+const elbRingZ=tor(0.225,0.024,M.accent); elbRingZ.rotation.x=Math.PI/2; elbG.add(elbRingZ);
+const elbGold=tor(0.228,0.016,M.goldBrt); elbG.add(elbGold);
+
+// Axle
+const elbAx=cy(0.054,0.054,0.66,10,M.dark); elbAx.rotation.z=Math.PI/2; elbG.add(elbAx);
+[-0.32,0.32].forEach(x=>{
+  const c=cy(0.095,0.095,0.050,12,M.silver); c.rotation.z=Math.PI/2; c.position.x=x; elbG.add(c);
+  const cr=tor(0.090,0.016,M.gold); cr.rotation.y=Math.PI/2; cr.position.x=x; elbG.add(cr);
+});
+
 // Elbow housing
-const eHs = bx(0.34,0.34,0.26,mBone); elbG.add(eHs);
-const eHsT= bx(0.36,0.04,0.28,mSilver); eHsT.position.y=0.17; elbG.add(eHsT);
-const eHsB= bx(0.36,0.04,0.28,mSilver); eHsB.position.y=-0.17; elbG.add(eHsB);
-// Elbow joint sphere
-const eSph = sp(0.19,mJoint); elbG.add(eSph);
-const eRing= tor(0.19,0.028,mGuinda); elbG.add(eRing);
-const eAx  = cy(0.048,0.048,0.54,10,mDark); eAx.rotation.z=Math.PI/2; elbG.add(eAx);
-[-0.28,0.28].forEach(x=>{ const c=cy(0.086,0.086,0.04,12,mSilver); c.rotation.z=Math.PI/2; c.position.x=x; elbG.add(c); });
-// Elbow pulley
-const ePul = cy(0.14,0.14,0.07,18,mSilver); ePul.rotation.x=Math.PI/2; ePul.position.z=0.20; elbG.add(ePul);
-const ePRim= tor(0.14,0.022,mGuinda); ePRim.rotation.x=Math.PI/2; ePRim.position.z=0.20; elbG.add(ePRim);
-
-// ════════════════════════════════════════════════════════
-// ARM 2 — forearm
-// ════════════════════════════════════════════════════════
-const arm2 = new THREE.Group(); elbG.add(arm2);
-
-const a2tube = cy(0.090,0.108,1.58,12,mBone); a2tube.rotation.x=Math.PI/2; a2tube.position.z=0.79; arm2.add(a2tube);
-const a2inn  = cy(0.055,0.070,1.54,10,mDark); a2inn.rotation.x=Math.PI/2; a2inn.position.z=0.79; arm2.add(a2inn);
-// Mounting bracket
-const bk2 = bx(0.28,0.28,0.20,mBone); bk2.position.z=0.10; arm2.add(bk2);
-[0.28,0.72,1.14].forEach((z,i)=>{
-  const rg = cy(0.124,0.124,0.040,12,i%2===0?mSilver:mAccent);
-  rg.rotation.x=Math.PI/2; rg.position.z=z; arm2.add(rg);
-});
-const stripe2 = bx(0.016,0.20,1.54,mGuinda); stripe2.position.set(0.095,0,0.79); arm2.add(stripe2);
-// Miniature servo (elbow)
-const svB = bx(0.20,0.18,0.26,mServo); svB.position.set(0.18,0.08,0.44); arm2.add(svB);
-const svLed = bx(0.04,0.04,0.04,new THREE.MeshStandardMaterial({color:0x6E0F1E,emissive:0x6E0F1E,emissiveIntensity:0.6}));
-svLed.position.set(0.18,0.17,0.44); arm2.add(svLed);
-const svH  = cy(0.065,0.065,0.05,10,mAccent); svH.rotation.z=Math.PI/2; svH.position.set(0.28,0.08,0.42); arm2.add(svH);
-
-// ════════════════════════════════════════════════════════
-// WRIST
-// ════════════════════════════════════════════════════════
-const wriP = new THREE.Group(); wriP.position.z=1.58; arm2.add(wriP);
-const wriG = new THREE.Group(); wriP.add(wriG);
-
-// Wrist cylinder (rotates about its Z = arm axis)
-const wriB = cy(0.140,0.152,0.28,16,mBone); wriB.rotation.x=Math.PI/2; wriG.add(wriB);
-const wriRa= tor(0.148,0.030,mGuinda); wriRa.rotation.x=Math.PI/2; wriRa.position.z=-0.11; wriG.add(wriRa);
-const wriRb= tor(0.148,0.030,mGuinda); wriRb.rotation.x=Math.PI/2; wriRb.position.z= 0.11; wriG.add(wriRb);
-const wriMid=cy(0.135,0.135,0.06,16,mSilver); wriMid.rotation.x=Math.PI/2; wriG.add(wriMid);
-// Miniature wrist servo
-const wsvB = bx(0.15,0.14,0.20,mServo); wsvB.position.set(0,0.17,0.04); wriG.add(wsvB);
-
-// ════════════════════════════════════════════════════════
-// GRIPPER — cable-driven, 3-segment fingers
-// Designed to match the IPN blueprint forked-pincer
-// ════════════════════════════════════════════════════════
-const gripRoot = new THREE.Group(); gripRoot.position.z=0.20; wriG.add(gripRoot);
-
-// Palm hub
-const palmHub = cy(0.115,0.125,0.16,14,mBone); palmHub.rotation.x=Math.PI/2; gripRoot.add(palmHub);
-const palmRing= tor(0.118,0.024,mGuinda); palmRing.rotation.x=Math.PI/2; gripRoot.add(palmRing);
-// Palm body
-const palmBody= bx(0.22,0.18,0.12,mBone); palmBody.position.z=0.10; gripRoot.add(palmBody);
-// Cable anchor plate
-const cablePlate = bx(0.18,0.06,0.06,mGuindaDk); cablePlate.position.set(0,-0.08,0.08); gripRoot.add(cablePlate);
-
-// ── Finger factory — 3 segments: base / middle / tip ──
-// sign: +1 upper finger, -1 lower finger
-const f1G = new THREE.Group(), f2G = new THREE.Group();
-[f1G, f2G].forEach((fg,fi)=>{
-  const sign = fi===0 ? 1 : -1;
-  gripRoot.add(fg);
-  fg.position.y = sign * 0.08;
-  fg.rotation.z = 0;
-
-  // ── Pivot knuckle ────────────────────────────────
-  const knuckle = sp(0.065, mJoint); fg.add(knuckle);
-  const kRing   = tor(0.065,0.016,mGuinda); fg.add(kRing);
-
-  // ── Segment 1 (proximal phalanx) ─────────────────
-  const seg1G = new THREE.Group(); seg1G.position.z=0.055; fg.add(seg1G);
-  const seg1  = bx(0.075,0.10,0.16,mBone); seg1.position.z=0.08; seg1G.add(seg1);
-  const seg1L = bx(0.030,0.10,0.155,mSilver); seg1L.position.set(-0.04,0,0.08); seg1G.add(seg1L);
-  const seg1R = bx(0.030,0.10,0.155,mSilver); seg1R.position.set( 0.04,0,0.08); seg1G.add(seg1R);
-
-  // ── Joint 1 ──────────────────────────────────────
-  const j1 = new THREE.Group(); j1.position.z=0.20; seg1G.add(j1);
-  const j1s= sp(0.050,mJoint); j1.add(j1s);
-  const j1r= tor(0.050,0.014,mGuinda); j1.add(j1r);
-
-  // ── Segment 2 (middle phalanx) ───────────────────
-  const seg2G = new THREE.Group(); seg2G.position.z=0.04; j1.add(seg2G);
-  const seg2  = bx(0.065,0.085,0.14,mBone); seg2.position.z=0.07; seg2G.add(seg2);
-  const seg2L = bx(0.025,0.085,0.135,mSilver); seg2L.position.set(-0.036,0,0.07); seg2G.add(seg2L);
-  const seg2R = bx(0.025,0.085,0.135,mSilver); seg2R.position.set( 0.036,0,0.07); seg2G.add(seg2R);
-
-  // ── Joint 2 ──────────────────────────────────────
-  const j2 = new THREE.Group(); j2.position.z=0.17; seg2G.add(j2);
-  const j2s= sp(0.042,mJoint); j2.add(j2s);
-
-  // ── Segment 3 (distal / tip — tapered) ───────────
-  const seg3G = new THREE.Group(); seg3G.position.z=0.035; j2.add(seg3G);
-  // Tapered block
-  const tipGeo = new THREE.BufferGeometry();
-  const tipVerts = new Float32Array([
-    // Front face (fingertip, narrow)
-    -0.022,-0.036, 0.14,  0.022,-0.036, 0.14, -0.022, 0.036, 0.14,
-     0.022, 0.036, 0.14,
-    // Back face (base, wide)
-    -0.030,-0.040,  0.0,  0.030,-0.040,  0.0, -0.030, 0.040,  0.0,
-     0.030, 0.040,  0.0,
-  ]);
-  const tipIdx = new Uint16Array([
-    0,1,2, 1,3,2,   // front
-    4,6,5, 5,6,7,   // back
-    0,4,1, 1,4,5,   // bottom
-    2,3,6, 3,7,6,   // top
-    0,2,4, 2,6,4,   // left
-    1,5,3, 3,5,7,   // right
-  ]);
-  tipGeo.setAttribute('position',new THREE.BufferAttribute(tipVerts,3));
-  tipGeo.setIndex(new THREE.BufferAttribute(tipIdx,1));
-  tipGeo.computeVertexNormals();
-  const tipMesh = new THREE.Mesh(tipGeo, mIvory); tipMesh.castShadow=true; seg3G.add(tipMesh);
-  // Rubber grip pad on tip
-  const padGeo = new THREE.BufferGeometry();
-  const padV = new Float32Array([
-    -0.018,-0.044,0.02, 0.018,-0.044,0.02, -0.018,-0.044,0.13, 0.018,-0.044,0.13
-  ]);
-  const padI = new Uint16Array([0,1,2, 1,3,2]);
-  padGeo.setAttribute('position',new THREE.BufferAttribute(padV,3));
-  padGeo.setIndex(new THREE.BufferAttribute(padI,1));
-  padGeo.computeVertexNormals();
-  const padMesh = new THREE.Mesh(padGeo, mRubber); padMesh.castShadow=false; seg3G.add(padMesh);
-  // Tip guinda accent line
-  const tipLine = bx(0.052,0.022,0.025,mTip); tipLine.position.set(0,0.035,0.005); seg3G.add(tipLine);
-
-  // ── Cable tension cord (visual wire from palm to tip) ─
-  const cableMat = new THREE.MeshStandardMaterial({color:0x080608,roughness:0.9});
-  const cable1 = cy(0.008,0.008,0.38,4,cableMat);
-  cable1.rotation.x=Math.PI/2; cable1.position.set(0.035*sign, sign*0, 0.19); fg.add(cable1);
-  const cable2 = cy(0.008,0.008,0.38,4,cableMat);
-  cable2.rotation.x=Math.PI/2; cable2.position.set(-0.035*sign, sign*0, 0.19); fg.add(cable2);
-});
-
-// references to finger groups for animation
-const grip_f1 = f1G, grip_f2 = f2G;
-
-// ── Apply joints to 3D ───────────────────────────────
-function applyArm(){
-  // Base: rotación vertical del pedestal
-  baseG.rotation.y = toRad(J.base.v);
-
-  // Hombro: sho=90 → brazo HORIZONTAL (rotation.x = 0)
-  //         sho=0  → brazo apuntando hacia arriba/atrás
-  //         sho=180→ brazo apuntando hacia abajo
-  shoG.rotation.x = toRad(-(J.sho.v - 90) * 0.85);
-
-  // Codo: 0=extendido, 135=completamente doblado
-  elbG.rotation.x = toRad(J.elb.v * 0.80);
-
-  // Muñeca: rotación axial
-  wriG.rotation.z = toRad(J.wri.v);
-
-  // Pinza: apertura simétrica con curvatura realista de dedos
-  const open = J.grip.v / 90;  // 0=cerrado, 1=abierto
-  const spread = open * 0.28;   // separación lateral
-  const curl   = open * 0.18;   // curvatura axial al abrir
-  grip_f1.position.y =  0.08 + spread;
-  grip_f2.position.y = -0.08 - spread;
-  grip_f1.rotation.z = -open * 0.26;
-  grip_f2.rotation.z =  open * 0.26;
-  // Pequeña rotación X para que los dedos se abran en abanico
-  grip_f1.rotation.x = -curl * 0.15;
-  grip_f2.rotation.x =  curl * 0.15;
+const elbHs=bx(0.38,0.38,0.30,M.body); elbHs.position.z=0.02; elbG.add(elbHs);
+const elbHTop=bx(0.42,0.028,0.32,M.gold); elbHTop.position.set(0,0.205,0.02); elbG.add(elbHTop);
+const elbHBot=bx(0.42,0.020,0.32,M.silverDk); elbHBot.position.set(0,-0.205,0.02); elbG.add(elbHBot);
+// Pulley detail
+const ePulley=cy(0.155,0.155,0.072,22,M.silver); ePulley.rotation.x=Math.PI/2; ePulley.position.z=0.24; elbG.add(ePulley);
+const ePulleyRim=tor(0.155,0.024,M.gold); ePulleyRim.rotation.x=Math.PI/2; ePulleyRim.position.z=0.24; elbG.add(ePulleyRim);
+const ePulleyHub=cy(0.065,0.065,0.085,10,M.dark); ePulleyHub.rotation.x=Math.PI/2; ePulleyHub.position.z=0.24; elbG.add(ePulleyHub);
+// Vent slots
+for(let j=0;j<2;j++){
+  const vs=bx(0.28,0.024,0.058,M.chromeDk); vs.position.set(0,0.10-j*0.20,0.15); elbG.add(vs);
 }
 
-// ── Camera orbit ─────────────────────────────────────
-let drag=false, lmx=0, lmy=0, camTh=0.82, camPh=0.40, camR=9.0;
-c3.addEventListener('mousedown', e=>{drag=true;lmx=e.clientX;lmy=e.clientY});
-document.addEventListener('mouseup',()=>drag=false);
-document.addEventListener('mousemove',e=>{
-  if(!drag)return;
-  camTh-=(e.clientX-lmx)*.005; lmx=e.clientX;
-  camPh=clamp(camPh-(e.clientY-lmy)*.004,0.06,1.45); lmy=e.clientY;
+// ══════════════════════════════════════════════════════════
+// FOREARM — Tapered with hexagonal cross-section feel
+// ══════════════════════════════════════════════════════════
+const arm2 = new THREE.Group(); elbG.add(arm2);
+
+const a2Main=cy(0.095,0.115,1.68,16,M.body2); a2Main.rotation.x=Math.PI/2; a2Main.position.z=0.84; arm2.add(a2Main);
+const a2Core=cy(0.060,0.075,1.64,12,M.bodyDk); a2Core.rotation.x=Math.PI/2; a2Core.position.z=0.84; arm2.add(a2Core);
+const a2Top=bx(0.16,0.036,1.62,M.silver); a2Top.position.set(0,0.12,0.84); arm2.add(a2Top);
+const a2TopEdge=bx(0.17,0.010,1.62,M.gold); a2TopEdge.position.set(0,0.138,0.84); arm2.add(a2TopEdge);
+const a2Stripe=bx(0.016,0.22,1.62,M.accent); a2Stripe.position.set(0.100,0,0.84); arm2.add(a2Stripe);
+
+// Bracket at elbow
+const a2Bk=bx(0.34,0.34,0.24,M.body2); a2Bk.position.z=0.12; arm2.add(a2Bk);
+const a2BkG=bx(0.38,0.024,0.26,M.gold); a2BkG.position.set(0,0.192,0.12); arm2.add(a2BkG);
+
+// Rings
+[0.28,0.70,1.16,1.54].forEach((z,i)=>{
+  const col=i%2===0?M.silver:M.gold;
+  const rg=cy(0.128,0.128,0.042,14,col); rg.rotation.x=Math.PI/2; rg.position.z=z; arm2.add(rg);
+  const ri=cy(0.097,0.097,0.048,12,M.chromeDk); ri.rotation.x=Math.PI/2; ri.position.z=z; arm2.add(ri);
 });
-c3.addEventListener('wheel',e=>{camR=clamp(camR+e.deltaY*.012,2.5,18);},{passive:true});
-c3.addEventListener('touchstart',e=>{lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;},{passive:true});
-c3.addEventListener('touchmove',e=>{
-  camTh-=(e.touches[0].clientX-lmx)*.005;lmx=e.touches[0].clientX;
-  camPh=clamp(camPh-(e.touches[0].clientY-lmy)*.004,0.06,1.45);lmy=e.touches[0].clientY;
+
+// Wrist servo block — lateral offset for realistic design
+const wsvBlock=bx(0.22,0.20,0.28,M.servo); wsvBlock.position.set(0.20,0.09,0.48); arm2.add(wsvBlock);
+const wsvTop=bx(0.24,0.022,0.30,M.gold); wsvTop.position.set(0.20,0.202,0.48); arm2.add(wsvTop);
+const wsvGear=cy(0.075,0.075,0.060,14,M.silver); wsvGear.rotation.z=Math.PI/2; wsvGear.position.set(0.31,0.09,0.44); arm2.add(wsvGear);
+const wsvGearR=tor(0.072,0.016,M.gold); wsvGearR.rotation.y=Math.PI/2; wsvGearR.position.set(0.32,0.09,0.44); arm2.add(wsvGearR);
+// LED on wrist servo
+const wsvLed=bx(0.030,0.030,0.030,M.ledGold); wsvLed.position.set(0.20,0.205,0.35); arm2.add(wsvLed);
+const wsvLed2=bx(0.020,0.020,0.020,M.ledRed); wsvLed2.position.set(0.20,0.205,0.56); arm2.add(wsvLed2);
+
+// ══════════════════════════════════════════════════════════
+// WRIST ROTATION JOINT
+// ══════════════════════════════════════════════════════════
+const wriP = new THREE.Group(); wriP.position.z=1.68; arm2.add(wriP);
+const wriG = new THREE.Group(); wriP.add(wriG);
+
+// Wrist drum — precision machined
+const wriDrum=cy(0.158,0.172,0.34,20,M.body2); wriDrum.rotation.x=Math.PI/2; wriG.add(wriDrum);
+const wriInner=cy(0.124,0.134,0.345,18,M.bodyDk); wriInner.rotation.x=Math.PI/2; wriG.add(wriInner);
+
+// Gold precision rings (dual flange design)
+const wriRa=tor(0.162,0.030,M.goldBrt); wriRa.rotation.x=Math.PI/2; wriRa.position.z=-0.14; wriG.add(wriRa);
+const wriRb=tor(0.162,0.030,M.goldBrt); wriRb.rotation.x=Math.PI/2; wriRb.position.z= 0.14; wriG.add(wriRb);
+const wriMid=cy(0.148,0.148,0.068,20,M.silver); wriMid.rotation.x=Math.PI/2; wriG.add(wriMid);
+const wriMidRing=tor(0.150,0.014,M.gold); wriMidRing.rotation.x=Math.PI/2; wriG.add(wriMidRing);
+
+// 8 rotation marks around circumference
+for(let i=0;i<8;i++){
+  const a=(i/8)*Math.PI*2;
+  const mk2=bx(0.010,0.170,0.022,i%2===0?M.gold:M.silverDk);
+  mk2.position.set(Math.cos(a)*0.164,Math.sin(a)*0.164,0);
+  mk2.rotation.x=Math.PI/2; mk2.rotation.z=a;
+  wriG.add(mk2);
+}
+
+// Servo actuation housing
+const wriSvHs=bx(0.17,0.16,0.24,M.servo); wriSvHs.position.set(0,0.186,0.04); wriG.add(wriSvHs);
+const wriSvTop=bx(0.19,0.022,0.26,M.gold); wriSvTop.position.set(0,0.270,0.04); wriG.add(wriSvTop);
+const wriSvGear=cy(0.070,0.070,0.044,14,M.silver); wriSvGear.position.set(0,0.255,0.02); wriG.add(wriSvGear);
+const wriSvHub=cy(0.040,0.040,0.052,8,M.dark); wriSvHub.position.set(0,0.255,0.02); wriG.add(wriSvHub);
+
+// ══════════════════════════════════════════════════════════
+// GRIPPER v9 — Premium industrial parallel-jaw clamp
+// Designed as a precision tool with real mechanical character
+// ══════════════════════════════════════════════════════════
+const gripRoot = new THREE.Group(); gripRoot.position.z=0.22; wriG.add(gripRoot);
+
+// ── Palm / flange assembly ────────────────────────────────
+// Mounting flange (attaches to wrist)
+const palmFlange=cy(0.142,0.155,0.115,20,M.body); palmFlange.rotation.x=Math.PI/2; gripRoot.add(palmFlange);
+const pfRing1=tor(0.142,0.028,M.goldBrt); pfRing1.rotation.x=Math.PI/2; pfRing1.position.z=-0.04; gripRoot.add(pfRing1);
+const pfRing2=tor(0.142,0.020,M.gold); pfRing2.rotation.x=Math.PI/2; pfRing2.position.z= 0.04; gripRoot.add(pfRing2);
+// Flange bolt ring (8 bolts)
+for(let i=0;i<8;i++){
+  const a=(i/8)*Math.PI*2; const r=0.118;
+  const b=cy(0.015,0.015,0.120,6,M.dark); b.rotation.x=Math.PI/2;
+  b.position.set(Math.cos(a)*r,Math.sin(a)*r,0); gripRoot.add(b);
+  const bh=cy(0.022,0.022,0.022,6,M.silverDk); bh.rotation.x=Math.PI/2;
+  bh.position.set(Math.cos(a)*r,Math.sin(a)*r,-0.058); gripRoot.add(bh);
+}
+
+// Actuator body — central mechanism housing
+const actBody=bx(0.28,0.24,0.22,M.body); actBody.position.z=0.165; gripRoot.add(actBody);
+// Actuator caps — gold top, silver bottom
+const actTop=bx(0.30,0.028,0.24,M.gold); actTop.position.set(0,0.134,0.165); gripRoot.add(actTop);
+const actBot=bx(0.30,0.022,0.24,M.silver); actBot.position.set(0,-0.134,0.165); gripRoot.add(actBot);
+// Side faces
+const actSideL=bx(0.025,0.24,0.22,M.bodyDk); actSideL.position.set(-0.152,0,0.165); gripRoot.add(actSideL);
+const actSideR=bx(0.025,0.24,0.22,M.bodyDk); actSideR.position.set( 0.152,0,0.165); gripRoot.add(actSideR);
+
+// Actuator servo motor
+const actServo=bx(0.14,0.14,0.13,M.servo); actServo.position.set(0.21,0,0.145); gripRoot.add(actServo);
+const actSvTop=bx(0.15,0.014,0.14,M.gold); actSvTop.position.set(0.21,0.077,0.145); gripRoot.add(actSvTop);
+const actGear=cy(0.058,0.058,0.060,14,M.silver); actGear.rotation.z=Math.PI/2; actGear.position.set(0.275,0,0.130); gripRoot.add(actGear);
+const actGearRing=tor(0.056,0.014,M.gold); actGearRing.rotation.y=Math.PI/2; actGearRing.position.set(0.278,0,0.130); gripRoot.add(actGearRing);
+const actGearHub=cy(0.034,0.034,0.070,8,M.dark); actGearHub.rotation.z=Math.PI/2; actGearHub.position.set(0.280,0,0.130); gripRoot.add(actGearHub);
+
+// Integrated LEDs on gripper body
+const gLed1=bx(0.030,0.030,0.030,M.ledRed); gLed1.position.set(-0.09,0.136,0.220); gripRoot.add(gLed1);
+const gLed2=bx(0.030,0.030,0.030,M.ledBlue); gLed2.position.set( 0.09,0.136,0.220); gripRoot.add(gLed2);
+
+// ── Linear guide rail system ──────────────────────────────
+// Two precision rails for jaw sliding
+const railTop=bx(0.012,0.018,0.38,M.silverDk); railTop.position.set(0, 0.108,0.29); gripRoot.add(railTop);
+const railBot=bx(0.012,0.018,0.38,M.silverDk); railBot.position.set(0,-0.108,0.29); gripRoot.add(railBot);
+// Rail end stops
+[-0.095,0.475].forEach(z=>{
+  const stop=bx(0.24,0.016,0.020,M.gold); stop.position.set(0,0.108,z/2+0.110); gripRoot.add(stop);
+});
+
+// ── JAW SYSTEM — precision parallel flat jaws ─────────────
+const jaw1G = new THREE.Group(), jaw2G = new THREE.Group();
+gripRoot.add(jaw1G); gripRoot.add(jaw2G);
+
+[jaw1G, jaw2G].forEach((jg, ji)=>{
+  const sign = ji===0 ? 1 : -1;
+  jg.position.set(0, sign*0.095, 0.140);
+
+  // Jaw carriage block (slides on rail)
+  const carriage=bx(0.26,0.048,0.08,M.silverDk); carriage.position.z=0.00; jg.add(carriage);
+  const carriageRing=bx(0.28,0.010,0.082,M.gold); carriageRing.position.set(0,sign*0.029,0.00); jg.add(carriageRing);
+
+  // Main jaw body — robust and angular
+  const jawMain=bx(0.22,0.130,0.295,M.jaw); jawMain.position.set(0,sign*0.040,0.185); jg.add(jawMain);
+
+  // Jaw top cap (gold)
+  const jawCap=bx(0.24,0.022,0.300,M.gold); jawCap.position.set(0,sign*0.107,0.185); jg.add(jawCap);
+
+  // Jaw outer accent stripe
+  const jawAcc1=bx(0.016,0.130,0.295,M.gold); jawAcc1.position.set(sign*0.119,sign*0.040,0.185); jg.add(jawAcc1);
+  const jawAcc2=bx(0.010,0.130,0.295,M.accent); jawAcc2.position.set(-sign*0.119,sign*0.040,0.185); jg.add(jawAcc2);
+
+  // Jaw rib detail (structural ribs) 
+  [-0.08,0.08].forEach(x=>{
+    const rib=bx(0.024,0.130,0.295,M.bodyDk); rib.position.set(x,sign*0.040,0.185); jg.add(rib);
+  });
+
+  // ── Gripping face — serrated rubber pads ──────────────
+  // Inner gripping face background
+  const gripFace=bx(0.18,0.055,0.265,M.jawTip); gripFace.position.set(0,-sign*0.084,0.188); jg.add(gripFace);
+
+  // Rubber serration teeth (7 rows)
+  for(let s=0;s<7;s++){
+    const tooth=bx(0.185,0.015,0.022,M.rubber);
+    tooth.position.set(0,-sign*0.100, 0.062+s*0.038);
+    jg.add(tooth);
+    // Groove between teeth
+    const groove=bx(0.185,0.008,0.014,M.chromeDk);
+    groove.position.set(0,-sign*0.098, 0.062+s*0.038+0.018);
+    jg.add(groove);
+  }
+
+  // ── Fingertip precision pad ────────────────────────────
+  // Tip bar (front edge of jaw)
+  const tipBar=bx(0.215,0.028,0.026,M.gold); tipBar.position.set(0,sign*0.108,0.326); jg.add(tipBar);
+  // Fingertip rubber pad (gripping tip)
+  const tipPad=bx(0.170,0.038,0.038,M.rubber); tipPad.position.set(0,-sign*0.105,0.322); jg.add(tipPad);
+  // Pad ribs (3)
+  for(let r=0;r<3;r++){
+    const pr=bx(0.170,0.010,0.008,M.chromeDk); pr.position.set(0,-sign*0.108,0.306+r*0.008); jg.add(pr);
+  }
+  // Sensor dot on fingertip (contact sensor visual)
+  const sensor=bx(0.032,0.032,0.024,M.ledBlue); sensor.position.set(0,-sign*0.118,0.320); jg.add(sensor);
+  const sensorRing=bx(0.040,0.040,0.014,M.chromeDk); sensorRing.position.set(0,-sign*0.118,0.315); jg.add(sensorRing);
+
+  // ── Spring mechanism (tension spring visual) ───────────
+  const spMat=new THREE.MeshStandardMaterial({color:0xC8C4BC,metalness:0.80,roughness:0.18});
+  for(let k=0;k<6;k++){
+    const coil=cy(0.013,0.013,0.014,8,spMat);
+    coil.position.set(sign*0.07,sign*0.006,0.020+k*0.025);
+    jg.add(coil);
+    const coil2=cy(0.013,0.013,0.014,8,spMat);
+    coil2.position.set(-sign*0.07,sign*0.006,0.020+k*0.025);
+    jg.add(coil2);
+  }
+
+  // ── Position encoder detail ────────────────────────────
+  const enc=bx(0.065,0.065,0.038,M.servo); enc.position.set(0,sign*0.062,0.008); jg.add(enc);
+  const encLed=bx(0.020,0.020,0.020,M.ledGold); encLed.position.set(0,sign*0.094,0.008); jg.add(encLed);
+});
+
+// ══════════════════════════════════════════════════════════
+// ARM KINEMATICS
+// ══════════════════════════════════════════════════════════
+function applyArm(){
+  baseG.rotation.y = toRad(J.base.v);
+  // Shoulder: 0°=down (−90 from horiz), 90°=horizontal, 180°=up
+  shoG.rotation.x = toRad(-(J.sho.v - 90) * 0.88);
+  // Elbow: 0=extended, 135=fully bent
+  elbG.rotation.x = toRad(J.elb.v * 0.80);
+  // Wrist: axial rotation
+  wriG.rotation.z = toRad(J.wri.v);
+  // Gripper — true parallel jaw movement
+  const open = J.grip.v / 90;
+  const spread = open * 0.110;
+  jaw1G.position.y =  0.095 + spread;
+  jaw2G.position.y = -0.095 - spread;
+}
+
+// ── Camera orbit ──────────────────────────────────────────
+let drag=false, lmx=0, lmy=0, camTh=0.72, camPh=0.36, camR=10.5;
+const lookTgt = new THREE.Vector3(0, 1.4, 1.8);
+c3.addEventListener('mousedown', e=>{drag=true;lmx=e.clientX;lmy=e.clientY;});
+document.addEventListener('mouseup', ()=>drag=false);
+document.addEventListener('mousemove', e=>{
+  if(!drag) return;
+  camTh -= (e.clientX-lmx)*0.005; lmx=e.clientX;
+  camPh = clamp(camPh-(e.clientY-lmy)*0.004, 0.06, 1.45); lmy=e.clientY;
+});
+c3.addEventListener('wheel', e=>{camR=clamp(camR+e.deltaY*0.013,2.5,22);},{passive:true});
+c3.addEventListener('touchstart', e=>{lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;},{passive:true});
+c3.addEventListener('touchmove', e=>{
+  camTh-=(e.touches[0].clientX-lmx)*0.005; lmx=e.touches[0].clientX;
+  camPh=clamp(camPh-(e.touches[0].clientY-lmy)*0.004,0.06,1.45); lmy=e.touches[0].clientY;
 },{passive:true});
 
 function resize3d(){
-  const w=vp.clientWidth,h=vp.clientHeight;
+  const w=vpEl.clientWidth, h=vpEl.clientHeight;
   renderer.setSize(w,h,false);
   cam3.aspect=w/h; cam3.updateProjectionMatrix();
 }
-resize3d(); window.addEventListener('resize',resize3d);
+resize3d(); window.addEventListener('resize', resize3d);
 
 function loop3d(){
   requestAnimationFrame(loop3d);
@@ -1047,27 +1274,46 @@ function loop3d(){
     camR*Math.sin(camPh),
     camR*Math.cos(camTh)*Math.cos(camPh)
   );
-  cam3.lookAt(1.8,1.0,0);
-  glow.intensity = 0.6+0.18*Math.sin(Date.now()*.0018);
-  goldL.intensity = 0.4+0.10*Math.sin(Date.now()*.0024+1.2);
-  renderer.render(scene,cam3);
+  cam3.lookAt(lookTgt);
+  const t=Date.now();
+  glowL.intensity  = 0.72 + 0.22*Math.sin(t*0.0017);
+  goldL.intensity  = 0.52 + 0.15*Math.sin(t*0.0024+1.1);
+  underL.intensity = 0.22 + 0.09*Math.sin(t*0.0031+2.2);
+  renderer.render(scene, cam3);
 }
 loop3d();
 </script>
 
-<!-- ══════════════════════════════════════════════════ UI -->
+<!-- UI -->
 <script>
-// Tabs
-document.querySelectorAll('.tab').forEach(t=>{
-  t.addEventListener('click',()=>{
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-    document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
-    t.classList.add('active');
-    document.getElementById('pane-'+t.dataset.t).classList.add('active');
+const sidebar  = document.getElementById('sidebar');
+const backdrop = document.getElementById('aside-backdrop');
+function openSidebar()  { sidebar.classList.add('open'); backdrop.style.display='block'; }
+function closeSidebar() { sidebar.classList.remove('open'); backdrop.style.display='none'; }
+document.getElementById('btn-sidebar-toggle').addEventListener('click', ()=>{
+  sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+});
+backdrop.addEventListener('click', closeSidebar);
+
+function switchTab(t){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.t===t));
+  document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('active',x.id==='pane-'+t));
+}
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    switchTab(tab.dataset.t);
+    if(window.matchMedia('(max-width:900px)').matches&&!sidebar.classList.contains('open')) openSidebar();
+  });
+});
+document.querySelectorAll('.nav-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const t=btn.dataset.t;
+    document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
+    switchTab(t);
+    sidebar.classList.contains('open')&&document.querySelector('.tab.active').dataset.t===t ? closeSidebar() : openSidebar();
   });
 });
 
-// Sliders
 JDEFS.forEach(d=>{
   const sl=document.getElementById('sl-'+d.key);
   if(sl) sl.addEventListener('input',()=>setJoint(d.key,parseFloat(sl.value)));
@@ -1076,41 +1322,29 @@ JDEFS.forEach(d=>{
 function refreshUI(){
   JDEFS.forEach(d=>{
     const v=Math.round(J[d.key].v);
-    const sl=document.getElementById('sl-'+d.key);
-    if(sl&&!sl.matches(':active')) sl.value=v;
-    const lv=document.getElementById('lv-'+d.key);
-    if(lv) lv.textContent=v+'°';
-    const hv=document.getElementById('h-'+d.key);
-    if(hv) hv.textContent=v+'°';
+    const sl=document.getElementById('sl-'+d.key); if(sl&&!sl.matches(':active')) sl.value=v;
+    const lv=document.getElementById('lv-'+d.key); if(lv) lv.textContent=v+'°';
+    const hv=document.getElementById('h-'+d.key);  if(hv) hv.textContent=v+'°';
   });
   const ft=document.getElementById('ft-ang');
   if(ft) ft.textContent=`B:${Math.round(J.base.v)}°  H:${Math.round(J.sho.v)}°  C:${Math.round(J.elb.v)}°  W:${Math.round(J.wri.v)}°  G:${Math.round(J.grip.v)}°`;
 }
+document.getElementById('btn-reset').addEventListener('click',()=>{ JDEFS.forEach(d=>setJoint(d.key,0)); log('Articulaciones a 0°','info'); });
+document.getElementById('btn-home').addEventListener('click',()=>{ JDEFS.forEach(d=>setJoint(d.key,d.def)); log('Posición HOME','ok'); });
 
-document.getElementById('btn-reset').addEventListener('click',()=>{
-  JDEFS.forEach(d=>setJoint(d.key,0)); log('Articulaciones restablecidas a 0°','info');
-});
-document.getElementById('btn-home').addEventListener('click',()=>{
-  JDEFS.forEach(d=>setJoint(d.key,d.def)); log('Posición HOME','ok');
-});
-
-// Log
 const logEl=document.getElementById('logbox');
 function log(msg,type='info'){
   const d=document.createElement('div'); d.className='ll '+type;
   const t=new Date().toLocaleTimeString('es-MX',{hour12:false});
   d.textContent=t+' '+msg; logEl.appendChild(d);
-  while(logEl.children.length>10) logEl.removeChild(logEl.firstChild);
+  while(logEl.children.length>12) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop=logEl.scrollHeight;
 }
-
 function modal(title,body){
   document.getElementById('modal-t').textContent=title;
   document.getElementById('modal-b').textContent=body;
   document.getElementById('modalbg').classList.add('show');
 }
-
-// KB highlight
 const jbMap={base:'jb-base',sho:'jb-sho',elb:'jb-elb',wri:'jb-wri',grip:'jb-grip'};
 function hlJ(k){
   Object.values(jbMap).forEach(id=>{const e=document.getElementById(id);if(e)e.classList.remove('kb');});
@@ -1118,10 +1352,11 @@ function hlJ(k){
 }
 
 applyArm(); refreshUI();
-log('Simulador 3D iniciado','ok');
+log('RoboArm IPN v9 iniciado','ok');
+log('Visión: pulgar+índice amplificado','info');
 </script>
 
-<!-- ══════════════════════════════════════════════════ TECLADO -->
+<!-- KEYBOARD -->
 <script>
 const KM={
   'KeyQ':['base',-2],'KeyA':['base',+2],
@@ -1144,9 +1379,9 @@ document.addEventListener('keyup',e=>{
 });
 </script>
 
-<!-- ══════════════════════════════════════════════════ CALIBRACIÓN -->
+<!-- CALIBRATION UI -->
 <script>
-const CAL0={base:{min:-180,max:180},sho:{min:0,max:180},elb:{min:0,max:135},wri:{min:-90,max:90},grip:{min:0,max:90}};
+const CAL0={base:{min:-90,max:90},sho:{min:0,max:180},elb:{min:0,max:135},wri:{min:-90,max:90},grip:{min:0,max:90}};
 function buildCalibUI(){
   const c=document.getElementById('calib-wrap'); c.innerHTML='';
   JDEFS.forEach(d=>{
@@ -1165,25 +1400,25 @@ function applyCalib(){
     const mx=parseFloat(document.getElementById('cx-'+d.key).value);
     if(isNaN(mn)||isNaN(mx)||mn>=mx){log(`Rango inválido: ${d.lbl}`,'err');ok=false;return;}
     J[d.key].calMin=mn; J[d.key].calMax=mx;
-    const sl=document.getElementById('sl-'+d.key);
-    if(sl){sl.min=mn;sl.max=mx;}
-    const lmin=document.getElementById('lm-'+d.key+'-min');
-    const lmax=document.getElementById('lm-'+d.key+'-max');
+    const sl=document.getElementById('sl-'+d.key); if(sl){sl.min=mn;sl.max=mx;}
+    const lmin=document.getElementById('lm-'+d.key+'-min'); const lmax=document.getElementById('lm-'+d.key+'-max');
     if(lmin)lmin.textContent=mn+'°'; if(lmax)lmax.textContent=mx+'°';
     setJoint(d.key,J[d.key].v);
   }); return ok;
 }
 document.getElementById('btn-save-cal').addEventListener('click',()=>{
-  if(!applyCalib())return;
+  if(!applyCalib()) return;
   const d={}; JDEFS.forEach(x=>d[x.key]={min:J[x.key].calMin,max:J[x.key].calMax});
-  localStorage.setItem('roboarm-ipn-calib',JSON.stringify(d)); log('Calibración guardada','ok');
+  try{localStorage.setItem('roboarm-ipn-v9-calib',JSON.stringify(d));log('Calibración guardada','ok');}catch(e){}
 });
 document.getElementById('btn-load-cal').addEventListener('click',()=>{
-  const s=localStorage.getItem('roboarm-ipn-calib');
-  if(!s){log('No hay calibración guardada','err');return;}
-  const d=JSON.parse(s);
-  JDEFS.forEach(x=>{ if(d[x.key]){document.getElementById('cm-'+x.key).value=d[x.key].min;document.getElementById('cx-'+x.key).value=d[x.key].max;} });
-  applyCalib(); log('Calibración cargada','ok');
+  try{
+    const s=localStorage.getItem('roboarm-ipn-v9-calib');
+    if(!s){log('Sin calibración guardada','err');return;}
+    const d=JSON.parse(s);
+    JDEFS.forEach(x=>{if(d[x.key]){document.getElementById('cm-'+x.key).value=d[x.key].min;document.getElementById('cx-'+x.key).value=d[x.key].max;}});
+    applyCalib(); log('Calibración cargada','ok');
+  }catch(e){log('Error al cargar calibración','err');}
 });
 document.getElementById('btn-reset-cal').addEventListener('click',()=>{
   JDEFS.forEach(d=>{document.getElementById('cm-'+d.key).value=CAL0[d.key].min;document.getElementById('cx-'+d.key).value=CAL0[d.key].max;});
@@ -1191,10 +1426,68 @@ document.getElementById('btn-reset-cal').addEventListener('click',()=>{
 });
 document.getElementById('btn-go-min').addEventListener('click',()=>{JDEFS.forEach(d=>setJoint(d.key,J[d.key].calMin));log('Moviendo a mínimos','info');});
 document.getElementById('btn-go-max').addEventListener('click',()=>{JDEFS.forEach(d=>setJoint(d.key,J[d.key].calMax));log('Moviendo a máximos','info');});
-try{const s=localStorage.getItem('roboarm-ipn-calib');if(s){const d=JSON.parse(s);JDEFS.forEach(x=>{if(d[x.key]){J[x.key].calMin=d[x.key].min;J[x.key].calMax=d[x.key].max;}});buildCalibUI();log('Calibración previa restaurada','info');}}catch(e){}
+try{
+  const s=localStorage.getItem('roboarm-ipn-v9-calib');
+  if(s){const d=JSON.parse(s);JDEFS.forEach(x=>{if(d[x.key]){J[x.key].calMin=d[x.key].min;J[x.key].calMax=d[x.key].max;}});buildCalibUI();log('Calibración previa restaurada','info');}
+}catch(e){}
 </script>
 
-<!-- ══════════════════════════════════════════════════ DETECCIÓN V5 -->
+<!-- DRAGGABLE CAMERA PANEL -->
+<script>
+(function(){
+  const overlay=document.getElementById('cam-overlay');
+  const hdr=document.getElementById('cam-hdr');
+  const btnMin=document.getElementById('btn-cam-minimize');
+  const btnSnap=document.getElementById('btn-cam-snap');
+  let dragging=false, offX=0, offY=0, snapped=true, snapIdx=0;
+  const SNAP=['bl','br','tl','tr'];
+  function applySnap(s){
+    const ow=overlay.offsetWidth,oh=overlay.offsetHeight,vw=window.innerWidth,vh=window.innerHeight,pad=14;
+    let left,top;
+    if(s==='bl'){left=pad;top=vh-oh-pad-34;}
+    else if(s==='br'){left=vw-ow-pad;top=vh-oh-pad-34;}
+    else if(s==='tl'){left=pad;top=56+pad;}
+    else{left=vw-ow-pad;top=56+pad;}
+    overlay.style.left=left+'px'; overlay.style.top=top+'px';
+    overlay.style.bottom='auto'; overlay.style.right='auto';
+  }
+  function startDrag(cx,cy2){
+    dragging=true; snapped=false;
+    const rect=overlay.getBoundingClientRect();
+    offX=cx-rect.left; offY=cy2-rect.top;
+    overlay.classList.add('dragging'); hdr.style.cursor='grabbing';
+  }
+  function moveDrag(cx,cy2){
+    if(!dragging) return;
+    let nx=cx-offX, ny=cy2-offY;
+    const ow=overlay.offsetWidth,oh=overlay.offsetHeight;
+    nx=Math.max(0,Math.min(window.innerWidth-ow,nx));
+    ny=Math.max(0,Math.min(window.innerHeight-oh,ny));
+    overlay.style.left=nx+'px'; overlay.style.top=ny+'px';
+    overlay.style.bottom='auto'; overlay.style.right='auto';
+  }
+  function endDrag(){ dragging=false; overlay.classList.remove('dragging'); hdr.style.cursor='grab'; }
+  hdr.addEventListener('mousedown',e=>{if(e.target===btnMin||e.target===btnSnap)return;startDrag(e.clientX,e.clientY);e.preventDefault();});
+  document.addEventListener('mousemove',e=>moveDrag(e.clientX,e.clientY));
+  document.addEventListener('mouseup',endDrag);
+  hdr.addEventListener('touchstart',e=>{if(e.target===btnMin||e.target===btnSnap)return;startDrag(e.touches[0].clientX,e.touches[0].clientY);},{passive:true});
+  document.addEventListener('touchmove',e=>{if(dragging)moveDrag(e.touches[0].clientX,e.touches[0].clientY);},{passive:true});
+  document.addEventListener('touchend',endDrag);
+  btnMin.addEventListener('click',()=>{const min=overlay.classList.toggle('minimized');btnMin.title=min?'Restaurar':'Minimizar';btnMin.textContent=min?'+':'—';});
+  btnSnap.addEventListener('click',()=>{snapIdx=(snapIdx+1)%SNAP.length;snapped=true;applySnap(SNAP[snapIdx]);});
+  window.addEventListener('resize',()=>{if(snapped)applySnap(SNAP[snapIdx]);});
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════
+     VISION SYSTEM v9 — AMPLIFIED MOVEMENT TRACKING
+     Core improvements:
+     • Movement amplification: small user move = big robot move
+     • Neutral calibration offsets all angles from YOUR posture
+     • Adaptive EMA: less smoothing when moving fast
+     • Only thumb(4) + index(8) for pinch grip
+     • Auto-calibrate on first stable detection
+═══════════════════════════════════════════════════════ -->
 <script>
 const camVideo  = document.getElementById('cam-video');
 const camCanvas = document.getElementById('cam-canvas');
@@ -1203,30 +1496,41 @@ const poseMap   = document.getElementById('pose-map');
 const pmCtx     = poseMap.getContext('2d');
 
 let handInst=null, poseInst=null, camInst=null, camActive=false, mirrorOn=false;
-let smoothAlpha=0.93, deadBand=2.5;
-let sens={base:0.55, sho:0.65, elb:0.75, grip:0.90};
-const EMA={base:{v:0,vel:0},sho:{v:90,vel:0},elb:{v:20,vel:0},wri:{v:0,vel:0},grip:{v:5,vel:0}};
-const LM_A=0.60;
+let smoothAlpha=0.82, deadBand=1.0;
+
+// Amplification factors (user-adjustable)
+let AMP = { sho: 2.0, base: 1.8, elb: 1.5 };
+
+// EMA state
+const EMA={base:{v:0},sho:{v:90},elb:{v:20},wri:{v:0},grip:{v:5}};
+
+// ── Neutral posture calibration ──────────────────────────
+// Stores the user's "rest" arm position. All movements are
+// relative offsets from this neutral, then amplified.
+let neutral = {
+  elevation: 0,   // arm elevation at rest (degrees)
+  lateral: 0,     // arm lateral offset at rest (degrees)
+  elbowAngle: 165 // elbow angle at rest (near-extended)
+};
+let calibrated = false;
+let autoCalibFrames = 0;
+const AUTO_CALIB_FRAMES = 45; // ~1.5s of stable detection before auto-calib
+
 let rawHand=null, rawPose=null, lmHand=null, lmPose=null;
 let fc=0, fpsLast=Date.now(), fpsVal=0;
+let prevJoints={base:0,sho:90,elb:20,wri:0,grip:5};
+let jointVel=0, prevVelTime=Date.now();
 
-// Toolbar state
-const CT = {skeleton:true, angles:true, hand:true, labels:false, trail:false, depthZ:false};
+const CT={skeleton:true, pinch:true, angles:true, labels:false, trail:false, depthZ:false};
 document.querySelectorAll('.ctool').forEach(btn=>{
-  const id=btn.id;
-  const map={'ct-skeleton':'skeleton','ct-angles':'angles','ct-hand':'hand',
-    'ct-labels':'labels','ct-trail':'trail','ct-depth':'depthZ'};
-  const k=map[id]; if(!k) return;
+  const map={'ct-skeleton':'skeleton','ct-pinch':'pinch','ct-angles':'angles','ct-labels':'labels','ct-trail':'trail','ct-depth':'depthZ'};
+  const k=map[btn.id]; if(!k) return;
   btn.classList.toggle('active',CT[k]);
-  btn.addEventListener('click',()=>{ CT[k]=!CT[k]; btn.classList.toggle('active',CT[k]); });
+  btn.addEventListener('click',()=>{CT[k]=!CT[k];btn.classList.toggle('active',CT[k]);});
 });
 
-// Trail buffer
-const TRAIL_MAX=40; const trail=[];
-
-// Velocity tracking
-let prevJoints={base:0,sho:90,elb:20,wri:0,grip:5};
-let jointVel=0, prevTime=Date.now();
+const TRAIL_MAX=60; const trail=[];
+const LM_ALPHA=0.52; // landmark render smoothing
 
 function smoothLM(prev,next,a){
   if(!prev) return next.map(p=>({...p}));
@@ -1237,16 +1541,38 @@ function smoothLM(prev,next,a){
 }
 function ang2d(a,b,c){
   const bax=a.x-b.x,bay=a.y-b.y,bcx=c.x-b.x,bcy=c.y-b.y;
-  return Math.atan2(Math.abs(bax*bcy-bay*bcx), bax*bcx+bay*bcy)*180/Math.PI;
+  return Math.atan2(Math.abs(bax*bcy-bay*bcx),bax*bcx+bay*bcy)*180/Math.PI;
 }
-function dist2d(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
-function emaU(k,target){
-  const e=EMA[k];
-  const nv=lerp(target,e.v,smoothAlpha);
-  if(Math.abs(nv-e.v)<deadBand*0.1) return e.v;
-  e.vel=nv-e.v; e.v=nv; return e.v;
+function dist2d(a,b){ return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2); }
+function getVis(lm,i){ return lm[i]?lm[i].visibility||0:0; }
+
+// ── Adaptive EMA ──────────────────────────────────────────
+// Less smoothing when joint is moving fast (more responsive)
+// More smoothing when still (more stable)
+const PREV_TARGET={base:0,sho:90,elb:20,wri:0,grip:5};
+function adaptiveEma(key, target){
+  const delta=Math.abs(target-PREV_TARGET[key]);
+  PREV_TARGET[key]=target;
+  // If large movement: use lower alpha (more reactive)
+  // If small movement: use higher alpha (more stable)
+  const moveMag=clamp(delta/8,0,1);
+  const alpha=lerp(smoothAlpha, Math.max(0.45,smoothAlpha-0.35), moveMag);
+  const nv=lerp(target,EMA[key].v,alpha);
+  if(Math.abs(nv-EMA[key].v)<deadBand*0.06) return EMA[key].v;
+  EMA[key].v=nv; return nv;
 }
-function getVis(lm,i){ return lm[i]?lm[i].visibility||0:0 }
+
+// ── PINCH: ONLY thumb(4) + index(8) ──────────────────────
+function computePinch(lm){
+  if(!lm||lm.length<21) return {open:0,dist:0,valid:false};
+  const thumb=lm[4], index=lm[8];
+  const handLen=Math.max(0.001, dist2d(lm[0],lm[9]));
+  const pinchDist=dist2d(thumb,index);
+  // Normalize with hand size compensation
+  const norm=pinchDist/(handLen*2.1);
+  const open=clamp(norm,0,1);
+  return {open,dist:pinchDist,handLen,valid:true};
+}
 
 function onHandRes(res){
   if(!res.multiHandLandmarks||!res.multiHandLandmarks.length){rawHand=null;return;}
@@ -1260,391 +1586,422 @@ function onHandRes(res){
 }
 function onPoseRes(res){ rawPose=res.poseLandmarks||null; }
 
-// ══════════════════════════════════════════════════════
-//  APERTURA DE MANO — multi-dedo (todos los 21 landmarks)
-//  Combina: pinch thumb-index, spread palmar, curvatura PIP
-// ══════════════════════════════════════════════════════
-function handOpenness(lm){
-  if(!lm||lm.length<21) return 0;
-  // Escala de la mano: muñeca → nudillo medio
-  const scale = dist2d(lm[0], lm[9]);
-  if(scale < 0.001) return 0;
-
-  // ── Método 1: spread desde el centro de la palma ──
-  // Centro de palma = promedio de muñeca + 5 MCPs
-  const palmPts = [0,5,9,13,17];
-  let cx=0, cy=0;
-  palmPts.forEach(i=>{ cx+=lm[i].x; cy+=lm[i].y; });
-  cx/=5; cy/=5;
-  const tips = [4,8,12,16,20];
-  const spreadDist = tips.reduce((s,i)=>s+dist2d({x:cx,y:cy},lm[i]),0)/5;
-  const spreadScore = clamp(spreadDist/(scale*1.15), 0, 1);
-
-  // ── Método 2: distancia pulgar a cada yema ──
-  const thumb = lm[4];
-  const avgThumbDist = [8,12,16,20].reduce((s,i)=>s+dist2d(thumb,lm[i]),0)/4;
-  const thumbScore = clamp(avgThumbDist/(scale*1.70), 0, 1);
-
-  // ── Método 3: extensión de dedos (PIP joints) ──
-  // Cada dedo: distancia punta → MCP / escala  (cuanto más extendido = más lejos)
-  const fingerPairs = [[4,2],[8,5],[12,9],[16,13],[20,17]]; // tip → MCP
-  const extScore = fingerPairs.reduce((s,[t,m])=>s+dist2d(lm[t],lm[m]),0)/(5*scale*1.0);
-  const normExt = clamp((extScore-0.5)*2, 0, 1);
-
-  // Combinación ponderada — más peso al spread y al pulgar
-  return clamp(spreadScore*0.45 + thumbScore*0.40 + normExt*0.15, 0, 1);
+// ── Arm geometry helpers ──────────────────────────────────
+// Compute elevation angle: positive = arm above horizontal
+// Expects MediaPipe normalized coords (y flipped: up = smaller y)
+function getArmElevation(RS,RE){
+  const dx=RE.x-RS.x, dy=RE.y-RS.y;
+  // dy>0 means elbow is BELOW shoulder in image → arm pointing down
+  // elevation is the angle of upper arm from horizontal
+  // positive elevation = arm raised above horizontal
+  return -Math.atan2(dy, Math.abs(dx)+0.001) * 180/Math.PI;
 }
 
+// Lateral angle: positive = arm extended to right, negative = left
+function getArmLateral(RS,RE,LS){
+  const shoulderW=Math.max(0.05,dist2d(LS,RS));
+  const dx=RE.x-RS.x;
+  // Normalize by shoulder width to be scale-invariant
+  const normLateral=dx/shoulderW;
+  return normLateral*60; // scale to degrees
+}
+
+// ── CALIBRATE neutral posture ─────────────────────────────
+function calibrateNeutral(){
+  if(!lmPose) return false;
+  const RS=lmPose[12],RE=lmPose[14],RW=lmPose[16],LS=lmPose[11];
+  const conf=Math.min(getVis(lmPose,12),getVis(lmPose,14));
+  if(conf<0.35) return false;
+
+  neutral.elevation = getArmElevation(RS,RE);
+  neutral.lateral   = getArmLateral(RS,RE,LS);
+  if(getVis(lmPose,14)>0.3&&getVis(lmPose,16)>0.3){
+    neutral.elbowAngle = ang2d({x:RS.x,y:RS.y},{x:RE.x,y:RE.y},{x:RW.x,y:RW.y});
+  }
+  calibrated=true;
+  // Show calibration badge
+  const cb=document.getElementById('cal-badge');
+  if(cb){ cb.style.display='flex'; setTimeout(()=>cb.style.display='none',2800); }
+  log('Postura neutra calibrada ✓','ok');
+  return true;
+}
+document.getElementById('btn-recal').addEventListener('click',()=>{
+  if(!camActive){log('Inicia la cámara primero','err');return;}
+  calibrated=false; autoCalibFrames=0;
+  setTimeout(calibrateNeutral,400);
+});
+
+// ── Main processing frame ─────────────────────────────────
 function processFrame(){
-  if(rawHand) lmHand=smoothLM(lmHand,rawHand,LM_A);
-  if(rawPose) lmPose=smoothLM(lmPose,rawPose,LM_A);
+  if(rawHand) lmHand=smoothLM(lmHand,rawHand,LM_ALPHA);
+  if(rawPose) lmPose=smoothLM(lmPose,rawPose,LM_ALPHA);
 
   let conf=0;
   let tBase=EMA.base.v, tSho=EMA.sho.v, tElb=EMA.elb.v, tWri=EMA.wri.v, tGrip=EMA.grip.v;
 
+  // ── POSE TRACKING — Amplified movement ───────────────────
   if(lmPose){
-    const RS=lmPose[12], LS=lmPose[11], RE=lmPose[14], RW=lmPose[16];
-    const vRS=RS.visibility||0, vRE=RE.visibility||0, vRW=RW.visibility||0;
-    conf = Math.min(vRS, vRE, vRW);
+    const LS=lmPose[11],RS=lmPose[12],RE=lmPose[14],RW=lmPose[16];
+    const vRS=getVis(lmPose,12),vRE=getVis(lmPose,14),vRW=getVis(lmPose,16);
+    conf=Math.min(vRS,vRE)*0.78+vRW*0.22;
 
-    if(conf > 0.28){
-      // ── BASE: rotación lateral del brazo del usuario ──────
-      // Posición horizontal de la muñeca relativa al hombro
-      // Cuando el brazo apunta al centro/frente → base=0
-      // Cuando el brazo va a la derecha del usuario → base positiva
-      const armLen = Math.max(0.01, dist2d(RS, RW));
-      const latRatio = (RS.x - RW.x) / armLen; // -1 a +1
-      const latAngle = Math.atan2(RS.x - RW.x, armLen) * 180/Math.PI;
-      tBase = clamp(latAngle * sens.base * 2.0, J.base.calMin, J.base.calMax);
-
-      // ── HOMBRO: elevación del brazo superior desde vertical ──
-      // Vec desde hombro a codo
-      const uArmX = RE.x - RS.x;
-      const uArmY = RE.y - RS.y; // negativo = codo sobre hombro (brazo arriba)
-      // Ángulo desde la vertical (upward). 0=recto arriba, 90=horizontal, 180=abajo
-      const elevFromVert = Math.atan2(Math.abs(uArmX), Math.max(0.001, -uArmY)) * 180/Math.PI;
-      // Mapeo: brazo arriba (elevFromVert≈0) → robot sho=90 (brazo horizontal)
-      // brazo horizontal (elevFromVert≈90) → robot sho=45 (brazo algo elevado)
-      const shoTarget = 90 - elevFromVert * sens.sho * 0.80;
-      tSho = clamp(shoTarget + 90, 0, 180);
-
-      const pShx=document.getElementById('p-shx'); if(pShx) pShx.textContent=latAngle.toFixed(1)+'°';
-      const pShy=document.getElementById('p-shy'); if(pShy) pShy.textContent=elevFromVert.toFixed(1)+'°';
-      document.getElementById('cd-base').textContent=Math.round(tBase)+'°';
-      document.getElementById('cd-sho').textContent=Math.round(tSho)+'°';
-
-      // ── CODO: ángulo 2D hombro-codo-muñeca ───────────────
-      if(vRE>0.30 && vRW>0.30){
-        const rawElbow = ang2d(RS, RE, RW); // 0-180°, 180=extendido
-        // Mapeo: extendido (180°) → robot codo=0, doblado (30°) → robot codo=135
-        const elbTarget = clamp((180 - rawElbow) * 0.75 * sens.elb, 0, 135);
-        tElb = elbTarget;
-        const pElb=document.getElementById('p-elb'); if(pElb) pElb.textContent=rawElbow.toFixed(1)+'°';
-        document.getElementById('cd-elb').textContent=rawElbow.toFixed(0)+'°';
+    if(conf>0.25){
+      // Auto-calibrate after stable detection
+      if(!calibrated){
+        autoCalibFrames++;
+        if(autoCalibFrames>=AUTO_CALIB_FRAMES){
+          calibrateNeutral();
+          autoCalibFrames=0;
+        }
       }
 
-      // ── MUÑECA desde pose (fallback sin mano) ────────────
-      if(vRW>0.25 && !lmHand){
-        // Ángulo del antebrazo codo→muñeca
-        const faX = RW.x - RE.x, faY = RW.y - RE.y;
-        const uaX = RS.x - RE.x, uaY = RS.y - RE.y;
-        const faAngle = Math.atan2(faX, -faY)*180/Math.PI - Math.atan2(uaX,-uaY)*180/Math.PI;
-        tWri = clamp(faAngle*0.50, J.wri.calMin, J.wri.calMax);
+      const elevation = getArmElevation(RS,RE);
+      const lateral   = getArmLateral(RS,RE,LS);
+
+      // ── SHOULDER (elevation) — AMPLIFIED ──────────────────
+      // delta from neutral, then amplified
+      const elevDelta = elevation - neutral.elevation;
+      // Map: neutral → 90° robot, +30° user elevation → +60° robot (2× amplification)
+      // Full range: user goes -30° to +60°, robot goes 0° to 180°
+      const rawSho = 90 + elevDelta * AMP.sho;
+      tSho = clamp(rawSho, J.sho.calMin, J.sho.calMax);
+
+      // Update readouts and amplification HUD
+      const pShy=document.getElementById('p-shy'); if(pShy) pShy.textContent=elevation.toFixed(1)+'°';
+      document.getElementById('cd-sho').textContent=Math.round(tSho)+'°';
+      const avElev=document.getElementById('av-elev'); if(avElev) avElev.textContent=elevation.toFixed(0)+'°';
+      const abElev=document.getElementById('ab-elev'); if(abElev) abElev.style.width=clamp(50+elevation*1.5,0,100)+'%';
+
+      // ── BASE (lateral) — AMPLIFIED ─────────────────────────
+      const latDelta = lateral - neutral.lateral;
+      const rawBase = latDelta * AMP.base;
+      tBase = clamp(rawBase, J.base.calMin, J.base.calMax);
+
+      const pShx=document.getElementById('p-shx'); if(pShx) pShx.textContent=lateral.toFixed(1)+'°';
+      document.getElementById('cd-base').textContent=Math.round(tBase)+'°';
+      const avLat=document.getElementById('av-lat'); if(avLat) avLat.textContent=lateral.toFixed(0)+'°';
+      const abLat=document.getElementById('ab-lat'); if(abLat) abLat.style.width=clamp(50+lateral*1.5,0,100)+'%';
+
+      // ── ELBOW — AMPLIFIED ──────────────────────────────────
+      if(vRE>0.28&&vRW>0.28){
+        const rawElb=ang2d({x:RS.x,y:RS.y},{x:RE.x,y:RE.y},{x:RW.x,y:RW.y});
+        // delta from neutral elbow angle, amplified
+        const elbDelta = neutral.elbowAngle - rawElb; // positive = more bent than neutral
+        // Map: 0° bend delta → robot elbow 20° (rest)
+        //      60° bend delta → robot elbow ~95° (half bent, amplified)
+        const rawRobotElb = 20 + elbDelta * AMP.elb;
+        tElb = clamp(rawRobotElb, J.elb.calMin, J.elb.calMax);
+
+        const pElb=document.getElementById('p-elb'); if(pElb) pElb.textContent=rawElb.toFixed(1)+'°';
+        document.getElementById('cd-elb').textContent=rawElb.toFixed(0)+'°';
+        const avElb=document.getElementById('av-elb'); if(avElb) avElb.textContent=rawElb.toFixed(0)+'°';
+        const abElb=document.getElementById('ab-elb'); if(abElb) abElb.style.width=clamp((180-rawElb)/180*100,0,100)+'%';
+      }
+
+      // ── WRIST — from forearm orientation ───────────────────
+      if(vRE>0.28&&vRW>0.28&&!lmHand){
+        const faAngle=Math.atan2(RW.x-RE.x,-(RW.y-RE.y))*180/Math.PI;
+        const uaAngle=Math.atan2(RS.x-RE.x,-(RS.y-RE.y))*180/Math.PI;
+        tWri=clamp((faAngle-uaAngle)*0.50, J.wri.calMin, J.wri.calMax);
+        document.getElementById('cd-wri').textContent=tWri.toFixed(0)+'°';
       }
 
       // Trail
-      if(CT.trail && vRW>0.35){ trail.push({x:RW.x,y:RW.y}); if(trail.length>TRAIL_MAX)trail.shift(); }
+      if(CT.trail&&vRW>0.35){ trail.push({x:RW.x,y:RW.y}); if(trail.length>TRAIL_MAX)trail.shift(); }
       else if(!CT.trail) trail.length=0;
     }
   }
 
-  // ── MANO: muñeca precisa + PINZA multi-dedo ──────────
+  // ── PINCH GRIP — thumb(4) + index(8) ONLY ─────────────────
   if(lmHand){
-    const hw=lmHand[0], hm=lmHand[9];
-    const ha=Math.atan2(hm.y-hw.y, hm.x-hw.x)*180/Math.PI;
-    tWri = clamp(ha*0.70, J.wri.calMin, J.wri.calMax);
-    const pWri=document.getElementById('p-wri'); if(pWri) pWri.textContent=ha.toFixed(1)+'°';
-    document.getElementById('cd-wri').textContent=ha.toFixed(0)+'°';
+    const pinch=computePinch(lmHand);
+    if(pinch.valid){
+      // 0=fully pinched→gripper closed, 1=fully open→gripper open
+      const rawGrip=pinch.open*90;
+      tGrip=clamp(rawGrip,J.grip.calMin,J.grip.calMax);
+      document.getElementById('cd-grip').textContent=(pinch.open*100).toFixed(0)+'%';
+      const pGrip=document.getElementById('p-grip'); if(pGrip) pGrip.textContent=(pinch.open*100).toFixed(0)+'%';
 
-    // PINZA — openness combinado de todos los dedos
-    const openness = handOpenness(lmHand);
-    tGrip = clamp(openness * 90 * sens.grip, J.grip.calMin, J.grip.calMax);
-    const pGrip=document.getElementById('p-grip'); if(pGrip) pGrip.textContent=(openness*100).toFixed(0)+'%';
-    document.getElementById('cd-grip').textContent=(openness*100).toFixed(0)+'%';
+      const avGrip=document.getElementById('av-grip'); if(avGrip) avGrip.textContent=(pinch.open*100).toFixed(0)+'%';
+      const abGrip=document.getElementById('ab-grip'); if(abGrip) abGrip.style.width=(pinch.open*100)+'%';
 
-    if(!lmPose) conf=Math.max(conf, 0.55);
+      // Pinch badge
+      const pDot=document.getElementById('pinch-dot'), pVal=document.getElementById('pinch-val');
+      if(pDot&&pVal){
+        const closed=pinch.open<0.28;
+        pDot.className=closed?'open':'';
+        pVal.textContent=closed?'CERRADO':(pinch.open*100).toFixed(0)+'%';
+      }
+
+      // Wrist from hand orientation (more accurate than pose)
+      const hw=lmHand[0],hm=lmHand[9];
+      const ha=Math.atan2(hm.y-hw.y,hm.x-hw.x)*180/Math.PI;
+      tWri=clamp(ha*0.55, J.wri.calMin, J.wri.calMax);
+      document.getElementById('cd-wri').textContent=ha.toFixed(0)+'°';
+      const pWri=document.getElementById('p-wri'); if(pWri) pWri.textContent=ha.toFixed(1)+'°';
+
+      if(!lmPose) conf=Math.max(conf,0.55);
+    }
   }
 
-  setJoint('base', emaU('base',tBase));
-  setJoint('sho',  emaU('sho', tSho));
-  setJoint('elb',  emaU('elb', tElb));
-  setJoint('wri',  emaU('wri', tWri));
-  setJoint('grip', emaU('grip',tGrip));
+  // Apply with adaptive EMA
+  setJoint('base', adaptiveEma('base', tBase));
+  setJoint('sho',  adaptiveEma('sho',  tSho));
+  setJoint('elb',  adaptiveEma('elb',  tElb));
+  setJoint('wri',  adaptiveEma('wri',  tWri));
+  setJoint('grip', adaptiveEma('grip', tGrip));
 
-  // Velocidad
-  const now2=Date.now();
-  const dt=(now2-prevTime)/1000||0.033;
-  const vel=JDEFS.reduce((s,d)=>s+Math.abs(J[d.key].v-prevJoints[d.key]),0)/dt;
-  jointVel=lerp(vel,jointVel,0.88);
+  // Velocity
+  const now2=Date.now(), dt2=(now2-prevVelTime)/1000||0.033;
+  const vel=JDEFS.reduce((s,d)=>s+Math.abs(J[d.key].v-prevJoints[d.key]),0)/dt2;
+  jointVel=lerp(vel,jointVel,0.82);
   JDEFS.forEach(d=>prevJoints[d.key]=J[d.key].v);
-  prevTime=now2;
+  prevVelTime=now2;
   document.getElementById('cd-vel').textContent=jointVel.toFixed(0)+' °/s';
 
+  // Confidence
   const pct=Math.round(conf*100);
   const pConf=document.getElementById('p-conf'); if(pConf) pConf.textContent=pct+'%';
   document.getElementById('cd-conf').textContent=pct+'%';
   document.getElementById('conf-bar').style.width=pct+'%';
 
+  // Signal bar
+  const sg=document.getElementById('signal-bar');
+  if(sg&&sg.style.display!=='none'){
+    const sgPose=document.getElementById('sg-pose'); if(sgPose) sgPose.style.width=pct+'%';
+    const svPose=document.getElementById('sv-pose'); if(svPose) svPose.textContent=pct+'%';
+    const gOpen=lmHand?computePinch(lmHand).open:0;
+    const sg2=document.getElementById('sg-grip'); if(sg2) sg2.style.width=(gOpen*100)+'%';
+    const sv2=document.getElementById('sv-grip2'); if(sv2) sv2.textContent=(gOpen*100).toFixed(0)+'%';
+    const velPct=Math.min(100,jointVel/5);
+    const sg3=document.getElementById('sg-vel'); if(sg3) sg3.style.width=velPct+'%';
+    const sv3=document.getElementById('sv-vel'); if(sv3) sv3.textContent=jointVel.toFixed(0);
+  }
+
+  // FPS
   fc++;
   const now3=Date.now();
   if(now3-fpsLast>800){fpsVal=Math.round(fc*1000/(now3-fpsLast));fc=0;fpsLast=now3;}
   document.getElementById('cam-fps').textContent=fpsVal+' fps';
 
+  // Pose quality
   const pmStatus=document.getElementById('pm-status');
-  if(conf>0.7){pmStatus.textContent='BUENO';pmStatus.style.color='var(--ok)';}
-  else if(conf>0.4){pmStatus.textContent='MEDIO';pmStatus.style.color='var(--warn)';}
-  else{pmStatus.textContent='BAJO';pmStatus.style.color='var(--err)';}
+  if(pmStatus){
+    if(!calibrated&&lmPose){
+      pmStatus.textContent='CALIBRANDO...'; pmStatus.style.color='var(--warn)';
+    } else if(conf>0.65){pmStatus.textContent='ÓPTIMO';pmStatus.style.color='var(--ok)';}
+    else if(conf>0.38){pmStatus.textContent='MEDIO';pmStatus.style.color='var(--warn)';}
+    else{pmStatus.textContent='BAJO';pmStatus.style.color='var(--err)';}
+  }
 
-  drawOverlay();
-  drawPoseMap();
+  drawOverlay(); drawPoseMap();
 }
 
-// ── POSE connections ────────────────────────────────
+// ── Pose skeleton rendering ───────────────────────────────
 const POSE_CONN=[
-  [11,12],[11,23],[12,24],[23,24],           // torso
-  [11,13],[13,15],[15,17],[15,19],[17,19],   // left arm
-  [12,14],[14,16],[16,18],[16,20],[18,20],   // right arm
-  [23,25],[25,27],[27,29],[29,31],[27,31],   // left leg
-  [24,26],[26,28],[28,30],[30,32],[28,32],   // right leg
-  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10] // face
+  [11,12],[11,23],[12,24],[23,24],
+  [11,13],[13,15],[15,17],[15,19],[17,19],
+  [12,14],[14,16],[16,18],[16,20],[18,20],
+  [23,25],[25,27],[27,29],[29,31],[27,31],
+  [24,26],[26,28],[28,30],[30,32],[28,32],
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10]
 ];
 const R_ARM=new Set([12,14,16,18,20,22]);
 const L_ARM=new Set([11,13,15,17,19,21]);
-const JNT_LBL={0:'Nariz',11:'H.Izq',12:'H.Der',13:'C.Izq',14:'C.Der',15:'M.Izq',16:'M.Der',23:'C.Izq',24:'C.Der'};
+const JNT_LBL={0:'Nariz',11:'H.Izq',12:'H.Der',13:'C.Izq',14:'C.Der',15:'M.Izq',16:'M.Der'};
 
-function ptN(lm,i,w,h){return {x:lm[i].x*w,y:lm[i].y*h,z:lm[i].z||0,v:lm[i].visibility||1}}
-
-function drawOverlay(){
-  const w=camCanvas.offsetWidth||280, h=camCanvas.offsetHeight||160;
-  camCanvas.width=w; camCanvas.height=h;
-  camCtx.clearRect(0,0,w,h);
-  // Trail
-  if(CT.trail&&trail.length>1){
-    camCtx.save();
-    for(let i=1;i<trail.length;i++){
-      const a=trail[i-1],b=trail[i];
-      const al=(i/trail.length)*0.55;
-      camCtx.globalAlpha=al;
-      camCtx.strokeStyle='#8C1428'; camCtx.lineWidth=1.5+al*2; camCtx.lineCap='round';
-      camCtx.beginPath(); camCtx.moveTo(a.x*w,a.y*h); camCtx.lineTo(b.x*w,b.y*h); camCtx.stroke();
-    }
-    camCtx.restore(); camCtx.globalAlpha=1;
-  }
-  if(CT.skeleton&&lmPose) drawPoseFull(lmPose,w,h);
-  if(CT.hand&&lmHand)     drawHandFull(lmHand,w,h);
+function ptN(lm,i,w,h){return{x:lm[i].x*w,y:lm[i].y*h,z:lm[i].z||0,v:lm[i].visibility||1};}
+function segCol(a,b){
+  if(R_ARM.has(a)&&R_ARM.has(b)) return{c:'#8C1428',lw:3.2};
+  if(L_ARM.has(a)&&L_ARM.has(b)) return{c:'#B09090',lw:1.6};
+  if(a>=23||b>=23) return{c:'#A0A898',lw:1.2};
+  return{c:'#907878',lw:1.5};
+}
+function drawLbl(x,y,text,color,w){
+  const fs=Math.max(7,Math.round(w*0.036));
+  camCtx.font=`600 ${fs}px IBM Plex Mono,monospace`;
+  camCtx.strokeStyle='#FDFAF6CC'; camCtx.lineWidth=2.8; camCtx.strokeText(text,x,y);
+  camCtx.fillStyle=color; camCtx.fillText(text,x,y);
 }
 
-function segCol(a,b){ if(R_ARM.has(a)&&R_ARM.has(b))return{c:'#8C1428',lw:2.8}; if(L_ARM.has(a)&&L_ARM.has(b))return{c:'#B09090',lw:1.5}; if(a>=23||b>=23)return{c:'#A0A898',lw:1.2}; return{c:'#907878',lw:1.5}; }
+function drawOverlay(){
+  const w=camCanvas.offsetWidth||292, h=camCanvas.offsetHeight||165;
+  camCanvas.width=w; camCanvas.height=h;
+  camCtx.clearRect(0,0,w,h);
 
-function drawPoseFull(lm,w,h){
+  if(CT.trail&&trail.length>1){
+    for(let i=1;i<trail.length;i++){
+      const al=(i/trail.length)*0.62; camCtx.globalAlpha=al;
+      camCtx.strokeStyle='#8C1428'; camCtx.lineWidth=1.5+al*2.5; camCtx.lineCap='round';
+      camCtx.beginPath(); camCtx.moveTo(trail[i-1].x*w,trail[i-1].y*h); camCtx.lineTo(trail[i].x*w,trail[i].y*h); camCtx.stroke();
+    }
+    camCtx.globalAlpha=1;
+  }
+  if(CT.skeleton&&lmPose) drawPoseSkeleton(lmPose,w,h);
+  if(CT.pinch&&lmHand)    drawPinchViz(lmHand,w,h);
+}
+
+function drawPoseSkeleton(lm,w,h){
   POSE_CONN.forEach(([a,b])=>{
     if(!lm[a]||!lm[b]) return;
     const vis=Math.min(getVis(lm,a),getVis(lm,b));
-    if(vis<0.20) return;
-    const {c,lw}=segCol(a,b);
+    if(vis<0.18) return;
+    const{c,lw}=segCol(a,b);
     const pa=ptN(lm,a,w,h), pb=ptN(lm,b,w,h);
-    camCtx.globalAlpha=Math.max(0.15,Math.min(1,vis*0.9));
+    camCtx.globalAlpha=Math.max(0.15,Math.min(1,vis*0.88));
     camCtx.strokeStyle=c; camCtx.lineWidth=lw; camCtx.lineCap='round';
     camCtx.beginPath(); camCtx.moveTo(pa.x,pa.y); camCtx.lineTo(pb.x,pb.y); camCtx.stroke();
   });
   camCtx.globalAlpha=1;
+
   for(let i=0;i<lm.length;i++){
-    if(!lm[i]) continue;
-    const vis=lm[i].visibility||0;
-    if(vis<0.20) continue;
+    if(!lm[i]||(lm[i].visibility||0)<0.18) continue;
     const p=ptN(lm,i,w,h);
-    let col='#907070',r=2.0;
-    if(R_ARM.has(i)){col='#8C1428';r=3.5;}
-    else if(L_ARM.has(i)){col='#B09090';r=2.5;}
-    else if(i===0){col='#706060';r=2.8;}
+    let col='#907070', r=2.0;
+    if(R_ARM.has(i)){col='#8C1428';r=4.0;}
+    else if(L_ARM.has(i)){col='#B09090';r=2.6;}
     if(CT.depthZ&&lm[i].z!==undefined){
       const d=clamp((lm[i].z+0.5)*255,0,255);
       col=`rgb(${Math.round(d*0.6)},${Math.round(d*0.3)},${Math.round(d*0.2)})`;
     }
-    camCtx.globalAlpha=Math.max(0.25,Math.min(1,vis));
+    camCtx.globalAlpha=Math.max(0.25,Math.min(1,lm[i].visibility||0));
     camCtx.beginPath(); camCtx.arc(p.x,p.y,r,0,Math.PI*2);
     camCtx.fillStyle=col; camCtx.fill();
     if(R_ARM.has(i)&&[12,14,16].includes(i)){
-      camCtx.strokeStyle='#F5EFE6'; camCtx.lineWidth=1;
-      camCtx.beginPath(); camCtx.arc(p.x,p.y,r+1.8,0,Math.PI*2); camCtx.stroke();
+      camCtx.strokeStyle='rgba(253,250,246,0.85)'; camCtx.lineWidth=1.4;
+      camCtx.beginPath(); camCtx.arc(p.x,p.y,r+2.5,0,Math.PI*2); camCtx.stroke();
     }
     camCtx.globalAlpha=1;
     if(CT.labels&&JNT_LBL[i]){
-      const fs=Math.max(7,Math.round(w*0.036));
-      camCtx.font=`600 ${fs}px IBM Plex Mono, monospace`;
-      camCtx.globalAlpha=Math.max(0.3,vis*0.8);
+      camCtx.globalAlpha=Math.max(0.3,(lm[i].visibility||0)*0.85);
+      const fs=Math.max(7,Math.round(w*0.032));
+      camCtx.font=`600 ${fs}px IBM Plex Mono,monospace`;
       camCtx.strokeStyle='#FDFAF6CC'; camCtx.lineWidth=2;
-      camCtx.strokeText(JNT_LBL[i],p.x+4,p.y-4);
+      camCtx.strokeText(JNT_LBL[i],p.x+4,p.y-5);
       camCtx.fillStyle=R_ARM.has(i)?'#8C1428':'#706060';
-      camCtx.fillText(JNT_LBL[i],p.x+4,p.y-4);
+      camCtx.fillText(JNT_LBL[i],p.x+4,p.y-5);
       camCtx.globalAlpha=1;
     }
   }
-  if(CT.angles){
-    if(lm[12]&&lm[14]&&lm[16]&&Math.min(getVis(lm,12),getVis(lm,14),getVis(lm,16))>0.40){
+
+  // Elbow angle arc
+  if(CT.angles&&lm[12]&&lm[14]&&lm[16]){
+    const vv=Math.min(getVis(lm,12),getVis(lm,14),getVis(lm,16));
+    if(vv>0.35){
       const ea=ang2d(ptN(lm,12,w,h),ptN(lm,14,w,h),ptN(lm,16,w,h));
       const ep=ptN(lm,14,w,h);
-      camCtx.globalAlpha=0.6; camCtx.strokeStyle='#8C1428'; camCtx.lineWidth=1;
-      camCtx.beginPath(); camCtx.arc(ep.x,ep.y,8,0,toRad(ea)); camCtx.stroke(); camCtx.globalAlpha=1;
-      drawLbl(ep.x-5,ep.y-10,Math.round(ea)+'°','#7A1022',w);
+      camCtx.globalAlpha=0.58; camCtx.strokeStyle='#D4A830'; camCtx.lineWidth=1.4;
+      camCtx.beginPath(); camCtx.arc(ep.x,ep.y,11,0,toRad(ea)); camCtx.stroke();
+      camCtx.globalAlpha=1;
+      drawLbl(ep.x-4,ep.y-13,Math.round(ea)+'°','#C89020',w);
     }
-    if(lm[12]&&getVis(lm,12)>0.45){
-      const sp=ptN(lm,12,w,h);
-      drawLbl(sp.x+6,sp.y-2,((0.5-lm[12].y)*200).toFixed(0)+'%','#9A7820',w);
-    }
-    if(lm[11]&&lm[12]&&Math.min(getVis(lm,11),getVis(lm,12))>0.4){
-      const ls=ptN(lm,11,w,h),rs=ptN(lm,12,w,h);
-      const sa=Math.atan2(rs.y-ls.y,rs.x-ls.x)*180/Math.PI;
-      drawLbl((ls.x+rs.x)/2-6,(ls.y+rs.y)/2-9,Math.round(sa)+'°','#806060',w);
-    }
-    if(lmHand&&CT.hand){
-      const hw=ptN(lmHand,0,w,h), hm=ptN(lmHand,9,w,h);
-      const ha=Math.atan2(hm.y-hw.y,hm.x-hw.x)*180/Math.PI;
-      drawLbl(hw.x+5,hw.y-8,Math.round(ha)+'°','#6A0F1C',w);
-    }
+  }
+
+  // Draw calibration neutral indicator (gold cross on shoulder)
+  if(calibrated&&lm[12]){
+    const rs=ptN(lm,12,w,h);
+    camCtx.globalAlpha=0.70; camCtx.strokeStyle='#D4A830'; camCtx.lineWidth=1.5;
+    const cs=10;
+    camCtx.beginPath(); camCtx.moveTo(rs.x-cs,rs.y); camCtx.lineTo(rs.x+cs,rs.y); camCtx.stroke();
+    camCtx.beginPath(); camCtx.moveTo(rs.x,rs.y-cs); camCtx.lineTo(rs.x,rs.y+cs); camCtx.stroke();
+    // Circle
+    camCtx.beginPath(); camCtx.arc(rs.x,rs.y,cs+2,0,Math.PI*2); camCtx.stroke();
+    camCtx.globalAlpha=1;
   }
 }
 
-function drawHandFull(lm,w,h){
-  const pt=i=>({x:lm[i].x*w,y:lm[i].y*h,z:lm[i].z||0});
-  const FING=[
-    {f:[0,1,2,3,4],c:'#C89098'},
-    {f:[0,5,6,7,8],c:'#C07888'},
-    {f:[0,9,10,11,12],c:'#B86878'},
-    {f:[0,13,14,15,16],c:'#B05870'},
-    {f:[0,17,18,19,20],c:'#A84868'},
+// ── PINCH visualization — only thumb(4) and index(8) ─────
+function drawPinchViz(lm,w,h){
+  const pt=i=>({x:lm[i].x*w,y:lm[i].y*h});
+
+  // Draw ALL fingers (dimly) for context
+  const CHAINS=[
+    {f:[0,1,2,3,4],    c:'#D4A040', a:0.90, lw:2.4},  // thumb — gold (PRIMARY)
+    {f:[0,5,6,7,8],    c:'#8C1428', a:0.90, lw:2.4},  // index — guinda (PRIMARY)
+    {f:[0,9,10,11,12], c:'#7A5868', a:0.28, lw:0.9},  // middle — dim
+    {f:[0,13,14,15,16],c:'#6C4858', a:0.22, lw:0.9},  // ring — dim
+    {f:[0,17,18,19,20],c:'#604050', a:0.18, lw:0.9},  // pinky — dim
   ];
-  FING.forEach(({f,c})=>{
+  CHAINS.forEach(({f,c,a,lw})=>{
     for(let i=0;i<f.length-1;i++){
-      const a=pt(f[i]),b=pt(f[i+1]);
-      camCtx.globalAlpha=0.75; camCtx.strokeStyle=c; camCtx.lineWidth=i===0?2.0:1.5; camCtx.lineCap='round';
-      camCtx.beginPath(); camCtx.moveTo(a.x,a.y); camCtx.lineTo(b.x,b.y); camCtx.stroke();
+      const pa=pt(f[i]),pb=pt(f[i+1]);
+      camCtx.globalAlpha=a; camCtx.strokeStyle=c; camCtx.lineWidth=lw; camCtx.lineCap='round';
+      camCtx.beginPath(); camCtx.moveTo(pa.x,pa.y); camCtx.lineTo(pb.x,pb.y); camCtx.stroke();
     }
   });
   camCtx.globalAlpha=1;
-  [4,8,12,16,20].forEach((i,fi)=>{
-    const p=pt(i);
-    const cols=['#C04058','#B83048','#AC2038','#A01028','#940018'];
-    camCtx.beginPath(); camCtx.arc(p.x,p.y,3.5,0,Math.PI*2);
-    camCtx.fillStyle=cols[fi]; camCtx.fill();
-    if(CT.depthZ){
-      const d=clamp((lm[i].z+0.5)*255,0,255);
-      camCtx.globalAlpha=0.45;
-      camCtx.beginPath(); camCtx.arc(p.x,p.y,5.5,0,Math.PI*2);
-      camCtx.fillStyle=`rgb(${d},${Math.round(d*0.5)},0)`; camCtx.fill();
-      camCtx.globalAlpha=1;
-    }
-  });
-  [5,9,13,17].forEach(i=>{const p=pt(i);camCtx.beginPath();camCtx.arc(p.x,p.y,2,0,Math.PI*2);camCtx.fillStyle='#B09098';camCtx.fill();});
-  // Wrist
-  const wr=pt(0);
-  camCtx.beginPath(); camCtx.arc(wr.x,wr.y,3.5,0,Math.PI*2); camCtx.fillStyle='#9A7080'; camCtx.fill();
-  camCtx.strokeStyle='#F5EFE6'; camCtx.lineWidth=1.2;
-  camCtx.beginPath(); camCtx.arc(wr.x,wr.y,5.5,0,Math.PI*2); camCtx.stroke();
-  // Apertura multi-dedo: conectar cada yema al pulgar y mostrar centro palma
-  const thumb4=pt(4);
-  const palmPts5=[0,5,9,13,17];
-  let pcx=0,pcy=0; palmPts5.forEach(i=>{pcx+=lm[i].x*w;pcy+=lm[i].y*h;}); pcx/=5;pcy/=5;
-  
-  // Conectar cada yema al centro de palma (indicador de apertura)
-  [4,8,12,16,20].forEach((i,fi)=>{
-    const p=pt(i);
-    const fracOpen=dist2d({x:pcx,y:pcy},{x:p.x*w,y:p.y*h});
-    const hscale2=dist2d(pt(0),pt(9));
-    const col2=fi===0?'#D4A840':'#B83048'; // pulgar=oro, dedos=guinda
-    camCtx.globalAlpha=0.35;
-    camCtx.strokeStyle=col2; camCtx.lineWidth=1; camCtx.setLineDash([2,3]);
-    camCtx.beginPath(); camCtx.moveTo(pcx,pcy); camCtx.lineTo(p.x*w,p.y*h); camCtx.stroke();
-  });
-  camCtx.setLineDash([]); camCtx.globalAlpha=1;
-  
-  // Círculo de apertura de palma
-  const hs3=dist2d(pt(0),pt(9));
-  const openness3 = handOpenness(lm);
-  const openRadius = openness3 * hs3 * w * 0.5;
-  camCtx.globalAlpha=0.18;
-  camCtx.strokeStyle= openness3>0.5?'#4A9860':'#D4A840';
-  camCtx.lineWidth=1.5; camCtx.setLineDash([3,3]);
-  camCtx.beginPath(); camCtx.arc(pcx,pcy,openRadius,0,Math.PI*2); camCtx.stroke();
-  camCtx.setLineDash([]); camCtx.globalAlpha=1;
 
-  // Punto central de palma
-  camCtx.beginPath(); camCtx.arc(pcx,pcy,3,0,Math.PI*2); camCtx.fillStyle='#D4A840'; camCtx.fill();
+  const pinch=computePinch(lm);
 
-  // Thumb–index line (secondary reference)
-  const th=pt(4),idx=pt(8);
-  const hs2=dist2d(pt(0),pt(9)); const pN=hs2>0.001?dist2d(th,idx)/hs2:0;
-  const pc2=pN<0.22?'#256938':pN<0.50?'#7A5210':'#8C1A18';
-  camCtx.globalAlpha=0.70; camCtx.strokeStyle=pc2; camCtx.lineWidth=1.5; camCtx.setLineDash([2,2]);
+  // Thumb tip (4) — gold circle with glow effect
+  const th=pt(4);
+  camCtx.globalAlpha=0.30; camCtx.beginPath(); camCtx.arc(th.x,th.y,10,0,Math.PI*2);
+  camCtx.fillStyle='#D4A840'; camCtx.fill(); camCtx.globalAlpha=1;
+  camCtx.beginPath(); camCtx.arc(th.x,th.y,5.5,0,Math.PI*2);
+  camCtx.fillStyle='#D4A840'; camCtx.fill();
+  camCtx.strokeStyle='rgba(255,255,250,0.9)'; camCtx.lineWidth=1.5;
+  camCtx.beginPath(); camCtx.arc(th.x,th.y,7.5,0,Math.PI*2); camCtx.stroke();
+  // Label
+  drawLbl(th.x+9,th.y-8,'PULGAR','#C89020',w);
+
+  // Index tip (8) — guinda circle with glow
+  const idx=pt(8);
+  camCtx.globalAlpha=0.30; camCtx.beginPath(); camCtx.arc(idx.x,idx.y,10,0,Math.PI*2);
+  camCtx.fillStyle='#8C1428'; camCtx.fill(); camCtx.globalAlpha=1;
+  camCtx.beginPath(); camCtx.arc(idx.x,idx.y,5.5,0,Math.PI*2);
+  camCtx.fillStyle='#8C1428'; camCtx.fill();
+  camCtx.strokeStyle='rgba(255,255,250,0.9)'; camCtx.lineWidth=1.5;
+  camCtx.beginPath(); camCtx.arc(idx.x,idx.y,7.5,0,Math.PI*2); camCtx.stroke();
+  // Label
+  drawLbl(idx.x+9,idx.y-8,'ÍNDICE','#8C1428',w);
+
+  // Pinch connection line
+  const lineColor=pinch.open<0.25?'#6FBA8A':(pinch.open<0.55?'#D4A030':'#8C1428');
+  const lineAlpha=clamp(1.0-pinch.open*0.65,0.28,1.0);
+  camCtx.globalAlpha=lineAlpha; camCtx.strokeStyle=lineColor; camCtx.lineWidth=2.2;
+  camCtx.setLineDash([4,3]);
   camCtx.beginPath(); camCtx.moveTo(th.x,th.y); camCtx.lineTo(idx.x,idx.y); camCtx.stroke();
   camCtx.setLineDash([]); camCtx.globalAlpha=1;
-  const mx2=(th.x+idx.x)/2, my2=(th.y+idx.y)/2;
-  drawLbl(mx2+3,my2-5,(openness3*100).toFixed(0)+'%',pc2,w);
-  // Wrist arrow
-  const hw2=pt(0),hm2=pt(9);
-  const dx=hm2.x-hw2.x,dy=hm2.y-hw2.y,len=Math.sqrt(dx*dx+dy*dy);
-  if(len>6){
-    const nx=dx/len,ny=dy/len,ang=Math.atan2(ny,nx),ae=Math.PI/7;
-    camCtx.globalAlpha=0.55; camCtx.strokeStyle='#A87080'; camCtx.lineWidth=1.5;
-    camCtx.beginPath(); camCtx.moveTo(hw2.x,hw2.y); camCtx.lineTo(hw2.x+nx*14,hw2.y+ny*14); camCtx.stroke();
-    camCtx.beginPath();
-    camCtx.moveTo(hw2.x+nx*14,hw2.y+ny*14);
-    camCtx.lineTo(hw2.x+nx*14-6*Math.cos(ang-ae),hw2.y+ny*14-6*Math.sin(ang-ae));
-    camCtx.moveTo(hw2.x+nx*14,hw2.y+ny*14);
-    camCtx.lineTo(hw2.x+nx*14-6*Math.cos(ang+ae),hw2.y+ny*14-6*Math.sin(ang+ae));
-    camCtx.stroke(); camCtx.globalAlpha=1;
-  }
-}
 
-function drawLbl(x,y,text,color,w){
-  const fs=Math.max(7,Math.round(w*0.038));
-  camCtx.font=`600 ${fs}px IBM Plex Mono, monospace`;
-  camCtx.strokeStyle='#FDFAF6D0'; camCtx.lineWidth=2.5;
-  camCtx.strokeText(text,x,y);
-  camCtx.fillStyle=color; camCtx.fillText(text,x,y);
+  // Distance label with status
+  const mx=(th.x+idx.x)/2, my=(th.y+idx.y)/2;
+  const statusStr=pinch.open<0.25?'✓ CERRADO':(pinch.open*100).toFixed(0)+'% ABIERTO';
+  drawLbl(mx+3,my-8, statusStr, lineColor, w);
+
+  // Wrist reference marker
+  const wr=pt(0);
+  camCtx.beginPath(); camCtx.arc(wr.x,wr.y,3.5,0,Math.PI*2); camCtx.fillStyle='#A07080'; camCtx.fill();
 }
 
 function drawPoseMap(){
-  const w2=poseMap.offsetWidth||264, h2=80;
+  const w2=poseMap.offsetWidth||260, h2=74;
   poseMap.width=w2; poseMap.height=h2;
   pmCtx.clearRect(0,0,w2,h2);
   if(!lmPose) return;
   const mx=i=>lmPose[i].x*w2*0.82+w2*0.09;
-  const my=i=>lmPose[i].y*h2*0.9+h2*0.05;
+  const my=i=>lmPose[i].y*h2*0.90+h2*0.05;
   POSE_CONN.forEach(([a,b])=>{
     if(!lmPose[a]||!lmPose[b]) return;
     const vis=Math.min(getVis(lmPose,a),getVis(lmPose,b));
-    if(vis<0.2) return;
-    const {c,lw}=segCol(a,b);
-    pmCtx.globalAlpha=Math.max(0.18,vis*0.75);
-    pmCtx.strokeStyle=c; pmCtx.lineWidth=Math.max(0.8,lw*0.6); pmCtx.lineCap='round';
+    if(vis<0.18) return;
+    const{c,lw}=segCol(a,b);
+    pmCtx.globalAlpha=Math.max(0.16,vis*0.75);
+    pmCtx.strokeStyle=c; pmCtx.lineWidth=Math.max(0.7,lw*0.52); pmCtx.lineCap='round';
     pmCtx.beginPath(); pmCtx.moveTo(mx(a),my(a)); pmCtx.lineTo(mx(b),my(b)); pmCtx.stroke();
   });
   [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{
-    if(!lmPose[i]||getVis(lmPose,i)<0.2) return;
-    const r=R_ARM.has(i)?2.5:1.6;
-    const col=R_ARM.has(i)?'#8C1428':'#907878';
-    pmCtx.globalAlpha=Math.max(0.2,getVis(lmPose,i)*0.85);
-    pmCtx.beginPath(); pmCtx.arc(mx(i),my(i),r,0,Math.PI*2);
-    pmCtx.fillStyle=col; pmCtx.fill();
+    if(!lmPose[i]||(lmPose[i].visibility||0)<0.18) return;
+    pmCtx.globalAlpha=Math.max(0.2,getVis(lmPose,i)*0.82);
+    pmCtx.beginPath(); pmCtx.arc(mx(i),my(i),R_ARM.has(i)?2.8:1.5,0,Math.PI*2);
+    pmCtx.fillStyle=R_ARM.has(i)?'#8C1428':'#907878'; pmCtx.fill();
   });
   pmCtx.globalAlpha=1;
 }
 
-// ── Start / Stop Webcam ──────────────────────────────
+// ── Camera start/stop ─────────────────────────────────────
 async function startCam(){
   const btn=document.getElementById('btn-cam-start');
-  btn.textContent='Cargando...'; btn.disabled=true;
+  btn.textContent='Cargando…'; btn.disabled=true;
   try{
     const stream=await navigator.mediaDevices.getUserMedia({
       video:{width:{ideal:640},height:{ideal:480},facingMode:'user',frameRate:{ideal:30}}
@@ -1653,33 +2010,40 @@ async function startCam(){
     await new Promise(r=>camVideo.onloadedmetadata=r);
     await camVideo.play();
     document.getElementById('cam-overlay').style.display='flex';
+    document.getElementById('signal-bar').style.display='flex';
+    document.getElementById('amp-hud').style.display='flex';
     document.getElementById('st-cam').className='chip on';
-    document.getElementById('btn-mirror').disabled=false; document.getElementById('btn-mirror').style.opacity='1';
-    document.getElementById('btn-calib-n').disabled=false; document.getElementById('btn-calib-n').style.opacity='1';
-    document.getElementById('ft-mode').textContent='Modo: Visión';
+    document.getElementById('btn-mirror').disabled=false;
+    document.getElementById('btn-mirror').style.opacity='1';
+    document.getElementById('ft-mode').textContent='Modo: Visión Amplificada';
     log('Webcam conectada','ok');
+    // Reset calibration for fresh start
+    calibrated=false; autoCalibFrames=0;
+    neutral={elevation:0,lateral:0,elbowAngle:165};
+
     if(typeof Hands!=='undefined'){
       handInst=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-      handInst.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.55,minTrackingConfidence:0.50});
+      handInst.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.60,minTrackingConfidence:0.55});
       handInst.onResults(onHandRes);
       document.getElementById('st-hand').className='chip on';
-      log('MediaPipe Hands listo','ok');
+      log('Hands: pulgar+índice únicamente','ok');
     }
     if(typeof Pose!=='undefined'){
       poseInst=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
       poseInst.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,
-        minDetectionConfidence:0.50,minTrackingConfidence:0.45});
+        minDetectionConfidence:0.55,minTrackingConfidence:0.50});
       poseInst.onResults(onPoseRes);
       document.getElementById('st-pose').className='chip on';
-      log('MediaPipe Pose listo','ok');
+      log('Pose listo — auto-calibrando en 1.5s','ok');
     }
-    const ml=handInst&&poseInst?'POSE+MANO':handInst?'SOLO MANO':'SOLO POSE';
-    document.getElementById('cam-mode-lbl').textContent=ml;
+    document.getElementById('cam-mode-lbl').textContent=
+      handInst&&poseInst?'POSE+PINZA':handInst?'SOLO PINZA':'SOLO POSE';
+
     if(typeof Camera!=='undefined'&&(handInst||poseInst)){
       camInst=new Camera(camVideo,{
         onFrame:async()=>{
-          if(handInst)await handInst.send({image:camVideo});
-          if(poseInst)await poseInst.send({image:camVideo});
+          if(handInst) await handInst.send({image:camVideo});
+          if(poseInst) await poseInst.send({image:camVideo});
           processFrame();
         },width:640,height:480
       });
@@ -1687,19 +2051,20 @@ async function startCam(){
     } else {
       camActive=true;
       (async function raf(){
-        if(!camActive)return;
-        if(handInst)await handInst.send({image:camVideo});
-        if(poseInst)await poseInst.send({image:camVideo});
+        if(!camActive) return;
+        if(handInst) await handInst.send({image:camVideo});
+        if(poseInst) await poseInst.send({image:camVideo});
         processFrame(); requestAnimationFrame(raf);
       })();
     }
     camActive=true;
-    btn.style.display='none'; document.getElementById('btn-cam-stop').style.display='block';
+    btn.style.display='none';
+    document.getElementById('btn-cam-stop').style.display='block';
   }catch(err){
-    btn.textContent='▶ Iniciar webcam'; btn.disabled=false;
+    btn.textContent='▶ Iniciar cámara'; btn.disabled=false;
     log('Error: '+err.message,'err');
     modal('Error al acceder a la cámara',
-      'No se pudo iniciar la webcam.\n\nVerifica:\n• Permisos en el navegador\n• Que no esté usada por otra app\n• HTTPS o localhost\n\n'+err.message);
+      'No se pudo iniciar la webcam.\n\nVerifique:\n• Permisos en el navegador\n• Que no esté en uso por otra app\n• HTTPS o localhost\n\n'+err.message);
   }
 }
 function stopCam(){
@@ -1709,27 +2074,26 @@ function stopCam(){
   if(poseInst){try{poseInst.close();}catch(e){}poseInst=null;}
   if(camVideo.srcObject){camVideo.srcObject.getTracks().forEach(t=>t.stop());camVideo.srcObject=null;}
   lmHand=null;lmPose=null;rawHand=null;rawPose=null;trail.length=0;
+  calibrated=false; autoCalibFrames=0;
+  neutral={elevation:0,lateral:0,elbowAngle:165};
   document.getElementById('cam-overlay').style.display='none';
+  document.getElementById('signal-bar').style.display='none';
+  document.getElementById('amp-hud').style.display='none';
   ['st-cam','st-hand','st-pose'].forEach(id=>document.getElementById(id).className='chip');
-  document.getElementById('btn-cam-start').textContent='▶ Iniciar webcam';
+  document.getElementById('btn-cam-start').textContent='▶ Iniciar cámara';
   document.getElementById('btn-cam-start').disabled=false;
   document.getElementById('btn-cam-start').style.display='block';
   document.getElementById('btn-cam-stop').style.display='none';
   document.getElementById('btn-mirror').disabled=true; document.getElementById('btn-mirror').style.opacity='.4';
-  document.getElementById('btn-calib-n').disabled=true; document.getElementById('btn-calib-n').style.opacity='.4';
   document.getElementById('ft-mode').textContent='Modo: Manual';
-  log('Webcam detenida','info');
+  log('Cámara detenida','info');
 }
+
 document.getElementById('btn-cam-start').addEventListener('click',startCam);
 document.getElementById('btn-cam-stop').addEventListener('click',stopCam);
 document.getElementById('btn-mirror').addEventListener('click',function(){
   mirrorOn=!mirrorOn; camVideo.style.transform=mirrorOn?'scaleX(-1)':'none';
   this.textContent=mirrorOn?'⇔ Espejo: ON':'⇔ Espejo';
-  this.classList.toggle('gh',mirrorOn);
-});
-document.getElementById('btn-calib-n').addEventListener('click',()=>{
-  Object.keys(EMA).forEach(k=>EMA[k].v=J[k].v);
-  log('Posición neutral fijada','ok');
 });
 document.getElementById('sl-smooth').addEventListener('input',function(){
   smoothAlpha=parseFloat(this.value); document.getElementById('lv-smooth').textContent=smoothAlpha.toFixed(2);
@@ -1737,13 +2101,19 @@ document.getElementById('sl-smooth').addEventListener('input',function(){
 document.getElementById('sl-dead').addEventListener('input',function(){
   deadBand=parseFloat(this.value); document.getElementById('lv-dead').textContent=deadBand.toFixed(1);
 });
-['base','sho','elb','grip'].forEach(k=>{
-  const sl=document.getElementById('se-'+k); if(!sl)return;
-  sl.addEventListener('input',function(){ sens[k]=parseFloat(this.value); document.getElementById('sv-'+k).textContent=sens[k].toFixed(1)+'×'; });
+// Amplification sliders
+document.getElementById('sl-amp-sho').addEventListener('input',function(){
+  AMP.sho=parseFloat(this.value); document.getElementById('lv-amp-sho').textContent=AMP.sho.toFixed(1)+'×';
+});
+document.getElementById('sl-amp-base').addEventListener('input',function(){
+  AMP.base=parseFloat(this.value); document.getElementById('lv-amp-base').textContent=AMP.base.toFixed(1)+'×';
+});
+document.getElementById('sl-amp-elb').addEventListener('input',function(){
+  AMP.elb=parseFloat(this.value); document.getElementById('lv-amp-elb').textContent=AMP.elb.toFixed(1)+'×';
 });
 </script>
 
-<!-- ══════════════════════════════════════════════════ SERIAL -->
+<!-- SERIAL -->
 <script>
 let port=null,writer=null,reader=null,serialHz=20,serialT=null;
 function slog(msg,cls='s-sy'){
@@ -1752,8 +2122,9 @@ function slog(msg,cls='s-sy'){
   el.innerHTML+=`<div class="${cls}">[${t}] ${msg}</div>`; el.scrollTop=el.scrollHeight;
 }
 async function connectSerial(){
-  if(!('serial' in navigator)){modal('Web Serial no disponible',
-    'Requiere Google Chrome o Microsoft Edge v89 o superior.\nLa página debe servirse por HTTPS o localhost.');return;}
+  if(!('serial' in navigator)){
+    modal('Web Serial no disponible','Requiere Google Chrome o Microsoft Edge v89 o superior.\nLa página debe servirse por HTTPS o localhost.'); return;
+  }
   try{
     port=await navigator.serial.requestPort();
     const baud=parseInt(document.getElementById('sel-baud').value);
@@ -1783,25 +2154,40 @@ async function disconnectSerial(){
 }
 async function startReader(){
   reader=port.readable.getReader(); const dec=new TextDecoder(); let buf='';
-  try{while(true){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value);let nl;while((nl=buf.indexOf('\n'))!==-1){const l=buf.substring(0,nl).trim();if(l)slog('← '+l,'s-rx');buf=buf.substring(nl+1);}}}
-  catch(e){if(e.name!=='AbortError')slog('Error RX: '+e.message,'s-er');}
+  try{
+    while(true){
+      const{value,done}=await reader.read();
+      if(done) break;
+      buf+=dec.decode(value);
+      let nl;
+      while((nl=buf.indexOf('\n'))!==-1){const l=buf.substring(0,nl).trim();if(l)slog('← '+l,'s-rx');buf=buf.substring(nl+1);}
+    }
+  }catch(e){if(e.name!=='AbortError')slog('Error RX: '+e.message,'s-er');}
 }
 function buildCmd(){
-  return `B:${Math.round(clamp((J.base.v+180)/2,0,180))},H:${Math.round(clamp(J.sho.v,0,180))},C:${Math.round(clamp(J.elb.v,0,135))},W:${Math.round(clamp(J.wri.v+90,0,180))},G:${Math.round(clamp(J.grip.v,0,90))}`;
+  return `B:${Math.round(clamp((J.base.v+90)/2+45,0,180))},H:${Math.round(clamp(J.sho.v,0,180))},C:${Math.round(clamp(J.elb.v,0,135))},W:${Math.round(clamp(J.wri.v+90,0,180))},G:${Math.round(clamp(J.grip.v,0,90))}`;
 }
-async function sendRaw(cmd){if(!writer)return;try{await writer.write(new TextEncoder().encode(cmd+'\n'));slog('→ '+cmd,'s-tx');}catch(err){slog('TX err: '+err.message,'s-er');disconnectSerial();}}
-async function sendCmd(){if(writer)await sendRaw(buildCmd());}
+async function sendRaw(cmd){
+  if(!writer) return;
+  try{await writer.write(new TextEncoder().encode(cmd+'\n'));slog('→ '+cmd,'s-tx');}
+  catch(err){slog('TX err: '+err.message,'s-er');disconnectSerial();}
+}
+async function sendCmd(){ if(writer) await sendRaw(buildCmd()); }
 document.getElementById('btn-conn').addEventListener('click',()=>port?disconnectSerial():connectSerial());
 document.getElementById('sl-hz').addEventListener('input',function(){
   serialHz=parseInt(this.value); document.getElementById('lv-hz').textContent=serialHz+' Hz';
   if(serialT){clearInterval(serialT);serialT=setInterval(sendCmd,Math.round(1000/serialHz));}
 });
 document.getElementById('btn-home-ser').addEventListener('click',async()=>{
-  await sendRaw('B:90,H:45,C:45,W:90,G:0'); JDEFS.forEach(d=>setJoint(d.key,d.def)); log('HOME enviado','ok');
+  await sendRaw('B:90,H:90,C:20,W:90,G:0');JDEFS.forEach(d=>setJoint(d.key,d.def));log('HOME enviado','ok');
 });
 document.getElementById('btn-ping').addEventListener('click',()=>sendRaw('PING'));
-document.getElementById('btn-send-raw').addEventListener('click',()=>{const v=document.getElementById('inp-cmd').value.trim();if(v)sendRaw(v);});
-document.getElementById('inp-cmd').addEventListener('keydown',e=>{if(e.key==='Enter'){const v=e.target.value.trim();if(v)sendRaw(v);}});
+document.getElementById('btn-send-raw').addEventListener('click',()=>{
+  const v=document.getElementById('inp-cmd').value.trim(); if(v) sendRaw(v);
+});
+document.getElementById('inp-cmd').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){const v=e.target.value.trim();if(v)sendRaw(v);}
+});
 document.getElementById('btn-clr').addEventListener('click',()=>document.getElementById('slog').innerHTML='');
 document.getElementById('btn-copy-fw').addEventListener('click',()=>navigator.clipboard.writeText(FW).then(()=>log('Firmware copiado','ok')));
 </script>
