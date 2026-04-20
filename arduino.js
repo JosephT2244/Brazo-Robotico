@@ -80,6 +80,20 @@ function sendNeutrals() {
   sendRaw(cmd);
 }
 
+/* Refresco periódico de neutrales cada 4 s — si el firmware perdió el
+   valor (reset silencioso, glitch I2C) la muñeca vuelve a detenerse. */
+let _neuRefreshTimer = null;
+function startNeuRefresh() {
+  clearInterval(_neuRefreshTimer);
+  _neuRefreshTimer = setInterval(() => {
+    if (writer) sendNeutrals();
+  }, 4000);
+}
+function stopNeuRefresh() {
+  clearInterval(_neuRefreshTimer);
+  _neuRefreshTimer = null;
+}
+
 /* ══════════════════════════════════════════════
    GENERADOR DE FIRMWARE — produce el .ino con los canales
    correctos según chanMap actual. Se llama cada vez que
@@ -160,7 +174,8 @@ void applyServos() {
 
 // ── Programa un servo: secs>0=adelante, secs<0=atrás, 0=parar ─
 void setServo(uint8_t i, float secs) {
-  if (fabsf(secs) < 0.01f) { sv[i].t = 0; sv[i].d = 0; }
+  // Umbral bajado de 0.01 → 0.001: permite correcciones finas (~0.72°)
+  if (fabsf(secs) < 0.001f) { sv[i].t = 0; sv[i].d = 0; }
   else { sv[i].t = fabsf(secs); sv[i].d = secs > 0 ? 1 : -1; }
 }
 
@@ -467,13 +482,14 @@ function angleToPWM(a){ return Math.round(PULSE_MIN + (clamp(a,0,180)/180)*(PULS
     El protocolo siempre usa B:/H:/C:/W:/G: — los canales solo
     afectan al firmware (los #define CH_*). */
 function buildCmd() {
-  // Servos de velocidad: valor = segundos a correr (+ adelante, - atrás, 0 parar)
+  // Precisión 3 decimales: con .toFixed(2), comandos < 5 ms se truncan a "0.00"
+  // y el firmware los ignora — por eso el hombro no se movía en correcciones finas.
   return [
-    `B:${clamp(J.base.v, -10, 10).toFixed(2)}`,
-    `H:${clamp(J.sho.v,  -10, 10).toFixed(2)}`,
-    `C:${clamp(J.elb.v,  -10, 10).toFixed(2)}`,
-    `W:${clamp(J.wri.v,  -10, 10).toFixed(2)}`,
-    `G:${clamp(J.grip.v, -10, 10).toFixed(2)}`,
+    `B:${clamp(J.base.v, -10, 10).toFixed(3)}`,
+    `H:${clamp(J.sho.v,  -10, 10).toFixed(3)}`,
+    `C:${clamp(J.elb.v,  -10, 10).toFixed(3)}`,
+    `W:${clamp(J.wri.v,  -10, 10).toFixed(3)}`,
+    `G:${clamp(J.grip.v, -10, 10).toFixed(3)}`,
   ].join(',');
 }
 
@@ -650,15 +666,13 @@ async function startReader() {
             return;
           }
           log('Arduino listo: ' + line, 'ok');
-          // 1) INMEDIATO: neutrales calibrados del usuario → evita drift de arranque
           sendNeutrals();
-          // 2) HOME: firmware pone todos los servos en neutral
           await sendRaw('HOME');
-          // 3) Estado JS sincronizado con el brazo físico
           if (typeof resetAngPos === 'function') resetAngPos();
           _lastSentCmd = buildCmd();
           clearInterval(serialT);
           serialT = setInterval(sendPos, Math.round(1000 / serialHz));
+          startNeuRefresh();
           log('Listo \u2014 mueve un servo o activa la c\u00e1mara para comenzar', 'ok');
           if (_uploadAfterReady) { _uploadAfterReady = false; uploadFirmware(); }
         }
@@ -704,6 +718,7 @@ async function disconnectSerial() {
   clearInterval(serialT); serialT = null;
   clearTimeout(_readyTimer); _readyTimer = null;
   clearTimeout(_pingTimer);  _pingTimer  = null;
+  stopNeuRefresh();
   // Cancelar lector primero para que el stream cierre
   if (reader) { try { await reader.cancel(); } catch(e){} try { reader.releaseLock(); } catch(e){} reader=null; }
   if (writer) { try { await writer.close(); } catch(e){} try { writer.releaseLock(); } catch(e){} writer=null; }

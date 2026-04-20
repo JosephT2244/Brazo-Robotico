@@ -126,7 +126,8 @@ function resetAngPos() {
    respetando maxSecs y angLim. Corre a rAF y refresca el budget
    cada frame para mantener al servo en movimiento.
    ────────────────────────────────────────────────────────────── */
-const _POS_TOL = 0.8;   // grados: banda muerta para considerar "llegado"
+const _POS_TOL    = 1.5;   // grados: banda muerta para considerar "llegado"
+const _MIN_CMD_S  = 0.002; // segundos: comando mínimo ejecutable por firmware
 
 function _tickPosCtrl() {
   JDEFS.forEach(d => {
@@ -139,7 +140,9 @@ function _tickPosCtrl() {
     }
     const dps = Math.max(1, j.dps);
     const sec = diff / dps;
-    const cmd = clamp(sec, -j.maxSecs, j.maxSecs);
+    let cmd   = clamp(sec, -j.maxSecs, j.maxSecs);
+    // Garantizar que el firmware no ignore el comando (umbral 0.001 s)
+    if (Math.abs(cmd) < _MIN_CMD_S) cmd = Math.sign(cmd || 1) * _MIN_CMD_S;
     j.v = cmd;
     j._runBudget = Math.abs(cmd);
     j._runDir    = Math.sign(cmd);
