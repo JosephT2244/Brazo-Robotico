@@ -45,20 +45,18 @@ let SENS_Z = 100;
 let ALPHA1 = 0.55;   // EMA-1: anti-ruido (MÁS alto = más suave). Antes 0.92 → la señal tardaba segundos en propagarse.
 let ALPHA2 = 0.70;   // EMA-2: suavidad de movimiento. Antes 0.95 → respuesta casi plana.
 
-/* ─── Zona muerta y mapeo a segundos ───────────────────────────
+/* ─── Zona muerta y mapeo a GRADOS objetivo ────────────────────
    Cada eje mide distancia desde el centro (0.5 para X/Y).
-   Zona muerta amplia → ignora micro-movimientos de la mano.
-   El factor por joint se calcula desde maxSecs para respetar el angLim
-   (regla de 3: secs = grados_deseados / dps). */
-const DEADZONE = 0.20;   // 20 % del ancho → ignora temblores y micro-movimientos
-const SPEED_K  = 0.85;   // 85 % de maxSecs en la visión (maxSecs ya es pequeño)
-/** delta = desviación del centro (-0.5..+0.5); jointKey da el tope por servo. */
-function posToSecs(delta, jointKey) {
+   Zona muerta → ignora temblores. Fuera de la zona muerta el
+   delta se mapea linealmente al rango ±angLim del servo. */
+const DEADZONE = 0.15;
+/** delta = desviación del centro (-0.5..+0.5); devuelve grados objetivo */
+function posToTargetDeg(delta, jointKey) {
   const d = Math.abs(delta);
+  const lim = J[jointKey]?.angLim ?? 90;
   if (d < DEADZONE) return 0;
   const t = (d - DEADZONE) / (0.5 - DEADZONE);          // 0..1
-  const cap = (J[jointKey]?.maxSecs ?? 1) * SPEED_K;     // máx. segundos seguros
-  return Math.sign(delta) * Math.min(1, t) * cap;
+  return Math.sign(delta) * Math.min(1, t) * lim;
 }
 
 /* ─── Filtros por articulación ──────────────────────────────── */
@@ -90,17 +88,13 @@ let _fpsFrames=0, _fpsLast=performance.now();
 function _ui(id,v){ const e=document.getElementById(id); if(e&&e.textContent!==String(v)) e.textContent=v; }
 function _bar(id,p){ const e=document.getElementById(id); if(e) e.style.width=clamp(p,0,100)+'%'; }
 
-/* ─── Filtro de señal doble EMA ─────────────────────────────── */
+/* ─── Filtro de señal doble EMA (en GRADOS objetivo) ────────── */
 function applyFilter(key, raw) {
-  const cap = J[key]?.maxSecs ?? 10;
-  raw = clamp(raw, -cap, cap);
+  const lim = J[key]?.angLim ?? 90;
+  raw = clamp(raw, -lim, lim);
   F[key].e1 = lerp(raw, F[key].e1, ALPHA1);
   F[key].e2 = lerp(F[key].e1, F[key].e2, ALPHA2);
-  const v = F[key].e2;
-  // Snap suave: solo <4 % de maxSecs se considera ruido (~1 ms para pinza).
-  // El deadzone de posToSecs ya filtra micro-movimientos más arriba.
-  if (Math.abs(v) < cap * 0.04) { F[key].e2 = 0; return 0; }
-  return clamp(v, -cap, cap);
+  return clamp(F[key].e2, -lim, lim);
 }
 
 /* ─── Pinza: distancia pulgar(4)-índice(8) normalizada ─────── */
@@ -163,15 +157,15 @@ function processFrame() {
   const sz   = dist2(lm[0], lm[9]);
   const conf = clamp(sz*4.5, 0, 1);
 
-  /* Mapeo posición → SEGUNDOS de velocidad (zona muerta por joint)   */
-  const rawBase = posToSecs(0.5 - palmX, 'base');
-  const rawSho  = posToSecs(0.5 - palmY, 'sho');
+  /* Mapeo posición → GRADOS objetivo (zona muerta por eje) */
+  const rawBase = posToTargetDeg(0.5 - palmX, 'base');
+  const rawSho  = posToTargetDeg(0.5 - palmY, 'sho');
   const zDelta  = -clamp(palmZ, -0.25, 0.25);
-  const rawElb  = posToSecs(zDelta * 2, 'elb');
+  const rawElb  = posToTargetDeg(zDelta * 2, 'elb');
   const handAng = Math.atan2(lm[9].y-lm[0].y, lm[9].x-lm[0].x)*180/Math.PI;
-  const rawWri  = posToSecs(clamp(handAng / 180, -0.5, 0.5), 'wri');
+  const rawWri  = posToTargetDeg(clamp(handAng / 180, -0.5, 0.5), 'wri');
   const open    = pinchOpen(lm) ?? 0.5;
-  const rawGrip = posToSecs(0.5 - open, 'grip');
+  const rawGrip = posToTargetDeg(0.5 - open, 'grip');
 
   /* Rastro */
   if (CT.trail) { TRAIL.push({x:palmX,y:palmY}); if(TRAIL.length>TRAIL_MAX)TRAIL.shift(); }
@@ -188,7 +182,7 @@ function processFrame() {
   const nowMs = performance.now();
   if (nowMs - _lastArmUpdate >= ARM_MIN_MS) {
     _lastArmUpdate = nowMs;
-    batchJoints({ base: fBase, sho: fSho, elb: fElb, wri: fWri, grip: fGrip });
+    batchTargets({ base: fBase, sho: fSho, elb: fElb, wri: fWri, grip: fGrip });
   }
 
   /* UI de telemetría */
@@ -200,7 +194,7 @@ function processFrame() {
   _ui('p-elb', palmZ.toFixed(3));
   _ui('p-wri', handAng.toFixed(0)+'°');
   _ui('p-grip', (open*100).toFixed(0)+'%');
-  const sfmt = v => v === 0 ? '■' : (v > 0 ? '+' : '') + v.toFixed(1) + 's';
+  const sfmt = v => Math.round(v) + '°';
   _ui('cd-base', sfmt(F.base.e2));
   _ui('cd-sho',  sfmt(F.sho.e2));
   _ui('cd-elb',  sfmt(F.elb.e2));
@@ -396,8 +390,8 @@ async function startCam() {
     document.getElementById('btn-overlay-stop').style.display = 'inline-flex';
     log('Cámara conectada — iniciando IA…', 'ok');
 
-    /* Resetear filtros */
-    JDEFS.forEach(d=>{ F[d.key].e1=F[d.key].e2=J[d.key].v; });
+    /* Resetear filtros al objetivo actual (evita saltos al iniciar) */
+    JDEFS.forEach(d=>{ F[d.key].e1=F[d.key].e2=J[d.key].target; });
 
     /* Iniciar draw loop rAF — el video es visible desde AQUÍ */
     _frameCount=0; _fpsFrames=0; _fpsLast=performance.now();

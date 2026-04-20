@@ -488,11 +488,10 @@ function velPWM(secs, key) {
 
 function updateTelemetry() {
   ['base','sho','elb','wri','grip'].forEach(k => {
-    const v   = J[k].v;
-    const lbl = v === 0 ? '■ parado'
-                        : (v > 0 ? '▶ +' : '◀ -') + Math.abs(v).toFixed(1) + 's';
-    const pw  = velPWM(v, k);
-    const pct = (clamp(v, -10, 10) + 10) / 20 * 100;   // -10..+10 → 0..100%
+    const j   = J[k];
+    const lbl = `${j.angPos.toFixed(0)}° → ${j.target.toFixed(0)}°`;
+    const pw  = velPWM(j.v, k);
+    const pct = (clamp(j.angPos, -j.angLim, j.angLim) + j.angLim) / (2 * j.angLim) * 100;
     const aEl = document.getElementById('stg-'+k+'-ang');
     const pEl = document.getElementById('stg-'+k+'-pwm');
     const bEl = document.getElementById('stg-'+k+'-bar');
@@ -505,8 +504,13 @@ function updateTelemetry() {
 }
 
 (function telemLoop(){
-  const changed = JDEFS.some(d => Math.abs(J[d.key].v - (_prevJ[d.key]||0)) > 0.1);
-  if (changed) { updateTelemetry(); JDEFS.forEach(d => _prevJ[d.key]=J[d.key].v); }
+  const changed = JDEFS.some(d =>
+    Math.abs(J[d.key].angPos - (_prevJ[d.key+'_a']||0)) > 0.5 ||
+    Math.abs(J[d.key].target - (_prevJ[d.key+'_t']||0)) > 0.5);
+  if (changed) {
+    updateTelemetry();
+    JDEFS.forEach(d => { _prevJ[d.key+'_a']=J[d.key].angPos; _prevJ[d.key+'_t']=J[d.key].target; });
+  }
   requestAnimationFrame(telemLoop);
 })();
 updateTelemetry();
@@ -624,13 +628,13 @@ async function startReader() {
           const el = document.getElementById('ard-latency'); if (el) el.textContent = lat+' ms';
         }
         if (line === 'PONG') {
-          // El Arduino responde a PING → firmware IPN-RoboArm confirmado
           clearTimeout(_pingTimer);
           if (!serialT) {
             clearInterval(serialT);
-            JDEFS.forEach(d => setJoint(d.key, d.def));
-            _lastSentCmd = buildCmd();  // bloquear envío hasta que el usuario mueva algo
-            setTimeout(() => sendNeutrals(), 200);
+            sendNeutrals();
+            await sendRaw('HOME');
+            if (typeof resetAngPos === 'function') resetAngPos();
+            _lastSentCmd = buildCmd();
             serialT = setInterval(sendPos, Math.round(1000 / serialHz));
             log('Firmware IPN-RoboArm verificado \u2713 — listo, mueve un servo para comenzar', 'ok');
           }
@@ -638,7 +642,6 @@ async function startReader() {
         if (line.startsWith('READY')) {
           clearTimeout(_readyTimer);
           clearTimeout(_pingTimer);
-          // Verificar que es nuestro firmware, no otro sketch
           if (!line.includes('IPN-RoboArm')) {
             log('\u26a0 Firmware distinto detectado — intentando subir el correcto\u2026', 'err');
             slog('\u26a0 Firmware no-IPN detectado (' + line + ')', 's-er');
@@ -647,16 +650,17 @@ async function startReader() {
             return;
           }
           log('Arduino listo: ' + line, 'ok');
-          JDEFS.forEach(d => setJoint(d.key, d.def));
-          _lastSentCmd = buildCmd();  // bloquear envío hasta que el usuario mueva algo
+          // 1) INMEDIATO: neutrales calibrados del usuario → evita drift de arranque
+          sendNeutrals();
+          // 2) HOME: firmware pone todos los servos en neutral
+          await sendRaw('HOME');
+          // 3) Estado JS sincronizado con el brazo físico
+          if (typeof resetAngPos === 'function') resetAngPos();
+          _lastSentCmd = buildCmd();
           clearInterval(serialT);
-          // Enviar trims neutrales calibrados por el usuario
-          setTimeout(() => sendNeutrals(), 200);
-          setTimeout(() => {
-            serialT = setInterval(sendPos, Math.round(1000 / serialHz));
-            log('Listo \u2014 mueve un servo o activa la c\u00e1mara para comenzar', 'ok');
-            if (_uploadAfterReady) { _uploadAfterReady = false; uploadFirmware(); }
-          }, 800);
+          serialT = setInterval(sendPos, Math.round(1000 / serialHz));
+          log('Listo \u2014 mueve un servo o activa la c\u00e1mara para comenzar', 'ok');
+          if (_uploadAfterReady) { _uploadAfterReady = false; uploadFirmware(); }
         }
       }
     }
@@ -960,12 +964,11 @@ document.getElementById('chk-autostart').addEventListener('change', function() {
   log('Auto-inicio: '+(this.checked?'activado':'desactivado'),'info');
 });
 
-// Sliders de prueba individual de servo
+// Sliders de prueba individual de servo (ahora en GRADOS objetivo)
 ['base','sho','elb','wri','grip'].forEach(k => {
   const sl = document.getElementById('ard-sl-'+k);
   if (sl) sl.addEventListener('input', function() {
-    setJoint(k, parseFloat(this.value));
-    if (writer) sendRaw(buildCmd());
+    setJointTarget(k, parseFloat(this.value));
   });
 });
 

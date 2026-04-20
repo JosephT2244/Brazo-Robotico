@@ -41,7 +41,8 @@ const JDEFS = [
 const J = {};
 JDEFS.forEach(d => {
   J[d.key] = {
-    v:       d.def,    // Comando actual en SEGUNDOS (velocidad continua)
+    v:       d.def,    // Comando actual en SEGUNDOS (velocidad continua) — interno
+    target:  0,        // Ángulo objetivo en GRADOS (lo que mueve el usuario/visión)
     calMin:  d.min,    // Mínimo de calibración (protege al servo)
     calMax:  d.max,    // Máximo de calibración (protege al servo)
     dps:     d.dps,    // Grados/segundo reales del servo (calibrable)
@@ -111,9 +112,70 @@ requestAnimationFrame(_tickAngPos);
 function resetAngPos() {
   JDEFS.forEach(d => {
     J[d.key].angPos     = 0;
+    J[d.key].target     = 0;
     J[d.key]._runBudget = 0;
     J[d.key]._runDir    = 0;
+    J[d.key].v          = 0;
   });
+}
+
+/* ──────────────────────────────────────────────────────────────
+   CONTROLADOR POSICIÓN → VELOCIDAD
+   La UI mueve J[key].target (grados). Este controlador calcula
+   la orden en segundos necesaria para acercar angPos → target,
+   respetando maxSecs y angLim. Corre a rAF y refresca el budget
+   cada frame para mantener al servo en movimiento.
+   ────────────────────────────────────────────────────────────── */
+const _POS_TOL = 0.8;   // grados: banda muerta para considerar "llegado"
+
+function _tickPosCtrl() {
+  JDEFS.forEach(d => {
+    const j    = J[d.key];
+    const tgt  = clamp(j.target, -j.angLim, j.angLim);
+    const diff = tgt - j.angPos;
+    if (Math.abs(diff) < _POS_TOL) {
+      if (j.v !== 0) { j.v = 0; j._runBudget = 0; j._runDir = 0; }
+      return;
+    }
+    const dps = Math.max(1, j.dps);
+    const sec = diff / dps;
+    const cmd = clamp(sec, -j.maxSecs, j.maxSecs);
+    j.v = cmd;
+    j._runBudget = Math.abs(cmd);
+    j._runDir    = Math.sign(cmd);
+  });
+  requestAnimationFrame(_tickPosCtrl);
+}
+requestAnimationFrame(_tickPosCtrl);
+
+/** Fija el objetivo angular (grados) de un servo. */
+function setJointTarget(key, deg) {
+  if (!J[key]) return;
+  J[key].target = clamp(deg, -J[key].angLim, J[key].angLim);
+  if (!_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      if (typeof applyArm === 'function') applyArm();
+      refreshUI();
+    });
+  }
+}
+
+/** Variante en lote para múltiples servos simultáneos (visión). */
+function batchTargets(map) {
+  for (const key in map) {
+    if (!J[key]) continue;
+    J[key].target = clamp(map[key], -J[key].angLim, J[key].angLim);
+  }
+  if (!_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      if (typeof applyArm === 'function') applyArm();
+      refreshUI();
+    });
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -234,24 +296,33 @@ const _uiCache = {};  // Caché: {id: ultimo_texto_mostrado}
 
 function refreshUI() {
   JDEFS.forEach(d => {
-    const v = J[d.key].v;
-    const lbl = v === 0 ? '■' : (v > 0 ? '▶' : '◀') + Math.abs(v).toFixed(1) + 's';
+    const j = J[d.key];
+    const ang = j.angPos;
+    const tgt = j.target;
+    const lbl = Math.abs(ang - tgt) < _POS_TOL
+      ? `${ang.toFixed(0)}°`
+      : `${ang.toFixed(0)}° → ${tgt.toFixed(0)}°`;
 
     const sl = document.getElementById('sl-' + d.key);
-    if (sl && document.activeElement !== sl) sl.value = v;
+    if (sl && document.activeElement !== sl) sl.value = tgt;
 
     _setText('lv-' + d.key, lbl);
     _setText('h-'  + d.key, lbl);
   });
 
-  const fmt = k => {
-    const v = J[k].v;
-    return v === 0 ? '■' : (v > 0 ? '+' : '') + v.toFixed(1) + 's';
-  };
+  const fmt = k => `${J[k].angPos.toFixed(0)}°`;
   _setText('ft-ang',
     `B:${fmt('base')}  H:${fmt('sho')}  C:${fmt('elb')}  W:${fmt('wri')}  G:${fmt('grip')}`
   );
 }
+
+// Refresco periódico del HUD para mostrar angPos cambiando cuando el servo se mueve
+setInterval(() => {
+  if (!_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(() => { _rafPending = false; refreshUI(); });
+  }
+}, 120);
 
 /** Actualiza el textContent de un elemento solo si ha cambiado (evita reflows innecesarios) */
 function _setText(id, txt) {

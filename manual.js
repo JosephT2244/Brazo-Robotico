@@ -5,29 +5,26 @@
    Teclado: mantener presionado → girar; soltar → parar.
    ════════════════════════════════════════════════ */
 
-const KB_SECS = 5.0;   // Segundos que se ordenan al mantener una tecla
-
-/* ── Sliders ────────────────────────────────────────────────── */
+/* ── Sliders: ahora son grados objetivo (±angLim). El controlador
+       interno en shared.js convierte grados→segundos para el firmware. ── */
 JDEFS.forEach(d => {
   ['sl-', 'ard-sl-'].forEach(prefix => {
     const sl = document.getElementById(prefix + d.key);
     if (!sl) return;
-    sl.min   = d.min;
-    sl.max   = d.max;
+    sl.min   = -d.angLim;
+    sl.max   =  d.angLim;
+    sl.step  = 1;
     sl.value = 0;
   });
+  const lmMin = document.getElementById('lm-' + d.key + '-min');
+  const lmMax = document.getElementById('lm-' + d.key + '-max');
+  if (lmMin) lmMin.textContent = `−${d.angLim}°`;
+  if (lmMax) lmMax.textContent = `+${d.angLim}°`;
 
   const sl = document.getElementById('sl-' + d.key);
   if (!sl) return;
-
-  // Mostrar valor mientras se arrastra
-  sl.addEventListener('input', () => setJoint(d.key, parseFloat(sl.value)));
-
-  // Al soltar: enviar comando y resetear slider a 0 (indica enviado)
-  sl.addEventListener('change', () => {
-    setJoint(d.key, parseFloat(sl.value));
-    setTimeout(() => { sl.value = 0; setJoint(d.key, 0); }, 120);
-  });
+  sl.addEventListener('input', () => setJointTarget(d.key, parseFloat(sl.value)));
+  sl.addEventListener('change', () => setJointTarget(d.key, parseFloat(sl.value)));
 });
 
 
@@ -81,50 +78,44 @@ JDEFS.forEach(d => {
 
 /* ── Botones ─────────────────────────────────────────────────── */
 document.getElementById('btn-reset').addEventListener('click', () => {
-  JDEFS.forEach(d => { clearTimeout(J[d.key]._degTimer); setJoint(d.key, 0); });
+  JDEFS.forEach(d => {
+    clearTimeout(J[d.key]._degTimer);
+    // Parar: objetivo = posición actual
+    setJointTarget(d.key, J[d.key].angPos);
+  });
   log('Todos los servos parados', 'info');
 });
 
 document.getElementById('btn-home').addEventListener('click', () => {
-  // HOME: poner ángulo estimado a 0 y parar
-  JDEFS.forEach(d => { clearTimeout(J[d.key]._degTimer); J[d.key].angPos = 0; setJoint(d.key, 0); });
+  JDEFS.forEach(d => clearTimeout(J[d.key]._degTimer));
+  resetAngPos();
+  if (typeof sendRaw === 'function' && typeof writer !== 'undefined' && writer) sendRaw('HOME');
   log('HOME — posición angular reseteada a 0°', 'ok');
 });
 
 
-/* ── Teclado — mantener = girar, soltar = parar ─────────────── */
+/* ── Teclado — mantener = girar hacia el extremo, soltar = parar ── */
+// signo: -1 = hacia -angLim, +1 = hacia +angLim
 const KM = {
-  'KeyQ': ['base', -KB_SECS],
-  'KeyA': ['base', +KB_SECS],
-  'KeyW': ['sho',  +KB_SECS],
-  'KeyS': ['sho',  -KB_SECS],
-  'KeyE': ['elb',  +KB_SECS],
-  'KeyD': ['elb',  -KB_SECS],
-  'KeyR': ['wri',  +KB_SECS],
-  'KeyF': ['wri',  -KB_SECS],
-  'KeyT': ['grip', +KB_SECS],
-  'KeyG': ['grip', -KB_SECS],
+  'KeyQ': ['base', -1],
+  'KeyA': ['base', +1],
+  'KeyW': ['sho',  +1],
+  'KeyS': ['sho',  -1],
+  'KeyE': ['elb',  +1],
+  'KeyD': ['elb',  -1],
+  'KeyR': ['wri',  +1],
+  'KeyF': ['wri',  -1],
+  'KeyT': ['grip', +1],
+  'KeyG': ['grip', -1],
 };
 
 const held = new Set();
-let kbTimer = null;
-
-function kbTick() {
-  let lastKey = null;
-  held.forEach(code => {
-    if (!KM[code]) return;
-    const [joint, secs] = KM[code];
-    setJoint(joint, secs);   // renovar la orden cada tick
-    lastKey = joint;
-  });
-  hlJ(lastKey);
-}
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
   if (e.code === 'Digit0') {
-    JDEFS.forEach(d => setJoint(d.key, 0));
+    JDEFS.forEach(d => setJointTarget(d.key, J[d.key].angPos));
     return;
   }
   if (e.code === 'KeyH') {
@@ -136,8 +127,9 @@ document.addEventListener('keydown', e => {
   if (KM[e.code] && !held.has(e.code)) {
     e.preventDefault();
     held.add(e.code);
-    kbTick();  // enviar inmediatamente al presionar
-    if (!kbTimer) kbTimer = setInterval(kbTick, 4000); // renovar cada 4s (< 5s)
+    const [joint, sign] = KM[e.code];
+    setJointTarget(joint, sign * J[joint].angLim);
+    hlJ(joint);
   }
 });
 
@@ -145,10 +137,7 @@ document.addEventListener('keyup', e => {
   if (!KM[e.code]) return;
   held.delete(e.code);
   const [joint] = KM[e.code];
-  setJoint(joint, 0);   // parar ese servo al soltar
-  if (held.size === 0 && kbTimer) {
-    clearInterval(kbTimer);
-    kbTimer = null;
-    hlJ(null);
-  }
+  // Al soltar: parar = objetivo = posición actual
+  setJointTarget(joint, J[joint].angPos);
+  if (held.size === 0) hlJ(null);
 });
