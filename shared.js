@@ -74,31 +74,47 @@ function saveDps() {
 
 /* ──────────────────────────────────────────────────────────────
    SEGUIMIENTO DE POSICIÓN ANGULAR ESTIMADA
-   Dado que son servos de velocidad sin feedback, estimamos la
-   posición integrando la velocidad comandada × tiempo transcurrido.
+   Cada comando en J.v representa una DURACIÓN (no una velocidad
+   continua). El firmware lo ejecuta como countdown: corre ese
+   tiempo y se detiene. En JS replicamos esa conducta vía
+   _runBudget por articulación — se rellena con |v| al emitir un
+   comando y se consume en cada tick de rAF.
    ────────────────────────────────────────────────────────────── */
+JDEFS.forEach(d => { J[d.key]._runBudget = 0; J[d.key]._runDir = 0; });
+
+function _startCmdBudget(key, v) {
+  const j = J[key];
+  j._runBudget = Math.abs(v);
+  j._runDir    = Math.sign(v);
+}
+
 let _angT = performance.now();
 function _tickAngPos() {
   const now = performance.now();
   const dt  = Math.min((now - _angT) / 1000, 0.2);
   _angT = now;
   JDEFS.forEach(d => {
-    if (J[d.key].v !== 0) {
-      const signVel = Math.sign(J[d.key].v);        // dirección del giro
-      const deg     = signVel * J[d.key].dps * dt;  // grados recorridos
-      const next    = J[d.key].angPos + deg;
-      // Tope al límite: si se llega al tope, parar el servo (seguridad)
-      if (Math.abs(next) >= J[d.key].angLim) {
-        J[d.key].angPos = clamp(next, -J[d.key].angLim, J[d.key].angLim);
-        J[d.key].v = 0;  // parada por límite
-      } else {
-        J[d.key].angPos = next;
-      }
+    const j = J[d.key];
+    if (j._runBudget > 0 && j._runDir !== 0) {
+      const step = Math.min(dt, j._runBudget);
+      const deg  = j._runDir * j.dps * step;
+      j.angPos   = clamp(j.angPos + deg, -j.angLim, j.angLim);
+      j._runBudget -= step;
+      if (j._runBudget <= 0.0005) { j._runBudget = 0; j._runDir = 0; }
     }
   });
   requestAnimationFrame(_tickAngPos);
 }
 requestAnimationFrame(_tickAngPos);
+
+/** Resetea la estimación angular (útil al enviar HOME). */
+function resetAngPos() {
+  JDEFS.forEach(d => {
+    J[d.key].angPos     = 0;
+    J[d.key]._runBudget = 0;
+    J[d.key]._runDir    = 0;
+  });
+}
 
 /* ──────────────────────────────────────────────────────────────
    MOVIMIENTO EN GRADOS — convierte "mover N grados" a pulsos
@@ -149,26 +165,19 @@ const lerp  = (a, b, t) => a + (b - a) * t;
    ────────────────────────────────────────────────────────────── */
 let _rafPending = false;  // Bandera: ¿hay una actualización pendiente?
 
-/** Clampa una orden de velocidad (segundos) contra TODOS los límites:
+/** Clampa una orden de velocidad (segundos):
  *  - calMin/calMax (rango del slider)
  *  - ±maxSecs (tope por comando)
- *  - Proyección forward: nunca permitir una orden que termine pasándose del angLim
- *    Ej: si angPos=60° y angLim=90° → máx +30° → máx +30/dps segundos
- *         si angPos=60° → máx -150° → máx -150/dps segundos (a 0 y luego -90°)
+ *  - Bloqueo solo si angPos YA está al tope en la dirección pedida.
+ *    (Sin proyección forward — ésta mataba comandos pequeños cuando
+ *    la estimación era inexacta.)
  */
 function _safeClamp(key, v) {
   const j = J[key];
   let c = clamp(v, j.calMin, j.calMax);
   c = clamp(c, -j.maxSecs, j.maxSecs);
-  const dps = Math.max(1, j.dps);
-  // Cuántos grados quedan hacia cada sentido antes de topar con angLim
-  const remainPos = Math.max(0, j.angLim  - j.angPos);   // en grados (positivo)
-  const remainNeg = Math.max(0, j.angPos  + j.angLim);   // en grados (positivo)
-  // Convertir a segundos y aplicar según la dirección del comando
-  const maxForward  =  remainPos / dps;
-  const maxBackward = -remainNeg / dps;
-  if (c > maxForward)  c = maxForward;
-  if (c < maxBackward) c = maxBackward;
+  if (c > 0 && j.angPos >=  j.angLim) return 0;
+  if (c < 0 && j.angPos <= -j.angLim) return 0;
   return c;
 }
 
@@ -179,6 +188,7 @@ function batchJoints(targets) {
     const clamped = _safeClamp(key, targets[key]);
     if (Math.abs(clamped - J[key].v) > 0.001) {
       J[key].v = clamped;
+      _startCmdBudget(key, clamped);
       changed = true;
     }
   }
@@ -202,6 +212,7 @@ function setJoint(key, val) {
   const clamped = _safeClamp(key, val);
   if (Math.abs(clamped - J[key].v) > 0.001) {
     J[key].v = clamped;
+    _startCmdBudget(key, clamped);
     if (!_rafPending) {
       _rafPending = true;
       requestAnimationFrame(() => {

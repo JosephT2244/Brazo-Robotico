@@ -719,6 +719,7 @@ async function emergencyStop() {
   clearInterval(serialT); serialT=null;
   await sendRaw('HOME');
   JDEFS.forEach(d => setJoint(d.key, d.def));
+  if (typeof resetAngPos === 'function') resetAngPos();
   log('⚠ STOP — servos en HOME', 'err');
 }
 
@@ -917,7 +918,12 @@ async function uploadFirmware() {
 document.getElementById('btn-conn').addEventListener('click',
   () => port ? disconnectSerial() : connectSerial());
 document.getElementById('btn-home-ser').addEventListener('click',
-  () => { JDEFS.forEach(d=>setJoint(d.key,d.def)); sendRaw(buildCmd()); log('HOME enviado','ok'); });
+  () => {
+    JDEFS.forEach(d=>setJoint(d.key,d.def));
+    if (typeof resetAngPos === 'function') resetAngPos();
+    sendRaw('HOME');
+    log('HOME enviado — posición angular reiniciada','ok');
+  });
 document.getElementById('btn-ping').addEventListener('click',
   () => sendRaw('PING'));
 document.getElementById('btn-emergency').addEventListener('click', emergencyStop);

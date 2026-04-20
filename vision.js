@@ -42,8 +42,8 @@ const MP_SKIP      = 2;       // Procesar 1 de cada 3 frames con MediaPipe
 let SENS_X = 120;
 let SENS_Y = 130;
 let SENS_Z = 100;
-let ALPHA1 = 0.92;   // EMA-1: anti-ruido (MÁS alto = más suave)
-let ALPHA2 = 0.95;   // EMA-2: suavidad de movimiento (MÁS alto = más lento)
+let ALPHA1 = 0.55;   // EMA-1: anti-ruido (MÁS alto = más suave). Antes 0.92 → la señal tardaba segundos en propagarse.
+let ALPHA2 = 0.70;   // EMA-2: suavidad de movimiento. Antes 0.95 → respuesta casi plana.
 
 /* ─── Zona muerta y mapeo a segundos ───────────────────────────
    Cada eje mide distancia desde el centro (0.5 para X/Y).
@@ -69,7 +69,7 @@ JDEFS.forEach(d => { F[d.key] = { e1: d.def, e2: d.def }; });
 let latestHand = null;
 
 /* ─── Rate-limit de envío al brazo (evita congelamiento) ────── */
-const ARM_MIN_MS = 100;   // máx 10 Hz al brazo (suficiente para movimiento suave)
+const ARM_MIN_MS = 60;    // máx ~16 Hz al brazo — respuesta fluida sin saturar
 let _lastArmUpdate = 0;
 
 /* ─── Toggles overlay ────────────────────────────────────────── */
@@ -92,14 +92,14 @@ function _bar(id,p){ const e=document.getElementById(id); if(e) e.style.width=cl
 
 /* ─── Filtro de señal doble EMA ─────────────────────────────── */
 function applyFilter(key, raw) {
-  // Tope duro por joint (nunca excede maxSecs del servo)
   const cap = J[key]?.maxSecs ?? 10;
   raw = clamp(raw, -cap, cap);
   F[key].e1 = lerp(raw, F[key].e1, ALPHA1);
   F[key].e2 = lerp(F[key].e1, F[key].e2, ALPHA2);
-  // Snap-to-zero escalado al joint: ignora <20 % de su maxSecs (micro-movimientos)
   const v = F[key].e2;
-  if (Math.abs(v) < cap * 0.20) { F[key].e2 = 0; return 0; }
+  // Snap suave: solo <4 % de maxSecs se considera ruido (~1 ms para pinza).
+  // El deadzone de posToSecs ya filtra micro-movimientos más arriba.
+  if (Math.abs(v) < cap * 0.04) { F[key].e2 = 0; return 0; }
   return clamp(v, -cap, cap);
 }
 
