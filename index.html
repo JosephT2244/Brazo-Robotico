@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<!-- RoboArm IPN v10 — Instituto Politécnico Nacional -->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>RoboArm IPN — Control 5-GDL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ─── BANNER AUTO-CONEXIÓN ──────────────────────────────── -->
+<div id="auto-connect-banner">
+  <span id="banner-msg">🔌 Arduino detectado — ¿Conectar al brazo?</span>
+  <div class="banner-btns">
+    <button id="banner-btn-connect" class="btn p">Conectar</button>
+    <button id="banner-btn-upload" class="btn gh" title="Conecta y sube el firmware generado (compila con arduino-cli local)">⬆ Conectar y Subir Firmware</button>
+    <button id="banner-btn-ignore" class="btn">Ignorar</button>
+  </div>
+</div>
+
+<div id="app">
+
+<!-- ─── HEADER ────────────────────────────────────────────── -->
+<header>
+  <div class="crest">IPN</div>
+  <div class="hdr-brand">
+    <div class="hdr-title">Brazo Robótico — 5 Grados de Libertad</div>
+    <div class="hdr-sub">INSTITUTO POLITÉCNICO NACIONAL · CONTROL Y VISIÓN ARTIFICIAL v10</div>
+  </div>
+  <div class="hdr-sep"></div>
+  <div class="hdr-keys"><b>Q/A</b> Base &ensp;<b>W/S</b> Hombro &ensp;<b>E/D</b> Codo &ensp;<b>R/F</b> Muñeca &ensp;<b>T/G</b> Pinza &ensp;<b>H</b> Guía</div>
+  <div class="chips" id="chips">
+    <div class="chip" id="st-cam"><div class="dot"></div>CAM</div>
+    <div class="chip" id="st-hand"><div class="dot"></div>MANO</div>
+    <div class="chip" id="st-serial"><div class="dot"></div>SERIAL</div>
+  </div>
+  <button id="btn-sidebar-toggle" title="Abrir panel">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+</header>
+
+<!-- ─── VIEWPORT 3D ───────────────────────────────────────── -->
+<div id="vp">
+  <canvas id="three-canvas"></canvas>
+
+  <!-- HUD ángulos actuales -->
+  <div id="hud">
+    <div class="hrow"><span>Base</span>   <span class="hv" id="h-base">0°</span></div>
+    <div class="hrow"><span>Hombro</span> <span class="hv" id="h-sho">90°</span></div>
+    <div class="hrow"><span>Codo</span>   <span class="hv" id="h-elb">20°</span></div>
+    <div class="hrow"><span>Muñeca</span> <span class="hv" id="h-wri">0°</span></div>
+    <div class="hrow"><span>Pinza</span>  <span class="hv" id="h-grip">5°</span></div>
+  </div>
+
+  <!-- HUD visión (posición de mano) -->
+  <div id="amp-hud">
+    <div class="amp-row"><span style="color:var(--ink4);width:44px">POS X</span><div class="amp-bar-wrap"><div class="amp-bar" id="ab-elev" style="width:50%"></div></div><span class="amp-val" id="av-elev">—</span></div>
+    <div class="amp-row"><span style="color:var(--ink4);width:44px">POS Y</span><div class="amp-bar-wrap"><div class="amp-bar" id="ab-lat" style="width:50%"></div></div><span class="amp-val" id="av-lat">—</span></div>
+    <div class="amp-row"><span style="color:var(--ink4);width:44px">PROF Z</span><div class="amp-bar-wrap"><div class="amp-bar" id="ab-elb" style="width:0%"></div></div><span class="amp-val" id="av-elb">—</span></div>
+    <div class="amp-row"><span style="color:var(--ink4);width:44px">PINZA</span><div class="amp-bar-wrap"><div class="amp-bar" id="ab-grip" style="width:0%"></div></div><span class="amp-val" id="av-grip">—</span></div>
+  </div>
+
+  <!-- Guía de teclado -->
+  <div id="kguide">
+    <span class="k">Q / A</span> Base &nbsp;<span class="k">W / S</span> Hombro<br>
+    <span class="k">E / D</span> Codo &nbsp;<span class="k">R / F</span> Muñeca<br>
+    <span class="k">T / G</span> Pinza &nbsp;<span class="k">0</span> Reset<br>
+    <span class="k">H</span> Ocultar · Arrastra = orbitar
+  </div>
+
+  <!-- Barra de señal visión -->
+  <div id="signal-bar">
+    <div class="sig-row"><span class="sig-name">MANO</span><div class="sig-gauge"><div class="sig-fill" id="sg-pose" style="width:0"></div></div><span class="sig-val" id="sv-pose">—</span></div>
+    <div class="sig-row"><span class="sig-name">PINZA</span><div class="sig-gauge"><div class="sig-fill" id="sg-grip" style="width:0"></div></div><span class="sig-val" id="sv-grip2">—</span></div>
+  </div>
+
+  <!-- ─── OVERLAY CÁMARA (arrastrable) ────────────────────── -->
+  <div id="cam-overlay">
+    <div id="cam-hdr">
+      <div id="cam-hdr-left">
+        <span>⣿ SEGUIMIENTO</span>
+        <span class="cam-badge" id="cam-mode-lbl">MANO</span>
+      </div>
+      <div id="cam-hdr-right">
+        <span style="font-family:var(--f-mono);font-size:8px;color:var(--g-mid);font-weight:500" id="cam-fps">— fps</span>
+        <button class="cam-ctrl-btn" id="btn-overlay-stop" title="Detener cámara" style="display:none;color:#C04040;border-color:#A03030">■</button>
+        <button class="cam-ctrl-btn" id="btn-cam-minimize" title="Minimizar">—</button>
+        <button class="cam-ctrl-btn" id="btn-cam-snap" title="Mover a esquina">⊡</button>
+      </div>
+    </div>
+    <div id="cam-body">
+      <div id="cam-wrap">
+        <video id="cam-video" autoplay muted playsinline></video>
+        <canvas id="cam-canvas"></canvas>
+        <div id="pinch-badge"><div id="pinch-dot"></div><span id="pinch-val">—</span></div>
+        <div id="cal-badge">⊙ MANO DETECTADA</div>
+      </div>
+      <div id="cam-toolbar">
+        <button class="ctool active" id="ct-skeleton">MANO</button>
+        <button class="ctool active" id="ct-pinch">PINZA</button>
+        <button class="ctool" id="ct-labels">LBLS</button>
+        <button class="ctool" id="ct-trail">RASTRO</button>
+        <button class="ctool" id="ct-depth">PROF-Z</button>
+      </div>
+      <div class="cam-conf"><div class="fill" id="conf-bar"></div></div>
+      <div id="cam-stats-panel">
+        <div class="cam-stats-row">
+          <div class="cs">CONF<span id="cd-conf">—</span></div>
+          <div class="cs">CODO<span id="cd-elb">—</span></div>
+          <div class="cs">MUÑECA<span id="cd-wri">—</span></div>
+          <div class="cs">PINZA<span id="cd-grip">—</span></div>
+        </div>
+        <div class="cam-stats-row2">
+          <div class="cs">BASE<span id="cd-base">—</span></div>
+          <div class="cs">HOMBRO<span id="cd-sho">—</span></div>
+          <div class="cs">VEL<span id="cd-vel">—</span></div>
+        </div>
+      </div>
+      <div id="pose-map-wrap">
+        <div id="pose-map-label"><span>MAPA DE MANO</span><span id="pm-status" style="color:var(--ok)">—</span></div>
+        <canvas id="pose-map"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div id="logbox"></div>
+</div><!-- /vp -->
+
+<!-- ─── SIDEBAR ───────────────────────────────────────────── -->
+<div id="aside-backdrop"></div>
+<aside id="sidebar">
+  <div class="tabrow">
+    <div class="tab active" data-t="manual"><span class="tab-icon">⚙</span><span class="tab-lbl">MANUAL</span></div>
+    <div class="tab" data-t="vision"><span class="tab-icon">◉</span><span class="tab-lbl">VISIÓN</span></div>
+    <div class="tab" data-t="calib"><span class="tab-icon">⊞</span><span class="tab-lbl">CALIB</span></div>
+    <div class="tab" data-t="arduino"><span class="tab-icon">⚡</span><span class="tab-lbl">ARDUINO</span></div>
+  </div>
+
+  <!-- ─── MANUAL ──────────────────────────────────────────── -->
+  <div class="pane active" id="pane-manual">
+    <div class="sec">Control de Articulaciones</div>
+    <div class="jb" id="jb-base">
+      <div class="jr"><span class="jn">Base — Rotación</span><span class="jk">Q / A</span><span class="jv" id="lv-base">■</span></div>
+      <input type="range" id="sl-base" min="-10" max="10" value="0" step="0.5">
+      <div class="jlim"><span id="lm-base-min">−10s</span><span id="lm-base-max">+10s</span></div>
+    </div>
+    <div class="jb" id="jb-sho">
+      <div class="jr"><span class="jn">Hombro — Elevación</span><span class="jk">W / S</span><span class="jv" id="lv-sho">■</span></div>
+      <input type="range" id="sl-sho" min="-10" max="10" value="0" step="0.5">
+      <div class="jlim"><span id="lm-sho-min">−10s</span><span id="lm-sho-max">+10s</span></div>
+    </div>
+    <div class="jb" id="jb-elb">
+      <div class="jr"><span class="jn">Codo — Flexión</span><span class="jk">E / D</span><span class="jv" id="lv-elb">■</span></div>
+      <input type="range" id="sl-elb" min="-10" max="10" value="0" step="0.5">
+      <div class="jlim"><span id="lm-elb-min">−10s</span><span id="lm-elb-max">+10s</span></div>
+    </div>
+    <div class="jb" id="jb-wri">
+      <div class="jr"><span class="jn">Muñeca — Rotación axial</span><span class="jk">R / F</span><span class="jv" id="lv-wri">■</span></div>
+      <input type="range" id="sl-wri" min="-10" max="10" value="0" step="0.5">
+      <div class="jlim"><span id="lm-wri-min">−10s</span><span id="lm-wri-max">+10s</span></div>
+    </div>
+    <div class="jb" id="jb-grip">
+      <div class="jr"><span class="jn">Pinza — Apertura</span><span class="jk">T / G</span><span class="jv" id="lv-grip">■</span></div>
+      <input type="range" id="sl-grip" min="-10" max="10" value="0" step="0.5">
+      <div class="jlim"><span id="lm-grip-min">−10s</span><span id="lm-grip-max">+10s</span></div>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-reset">■ Parar todo</button>
+      <button class="btn p" id="btn-home">↺ HOME</button>
+    </div>
+
+    <div class="sec">Mover en grados (preciso)</div>
+    <div class="info" style="margin-bottom:8px">
+      Escribe cuántos <span class="hl">grados exactos</span> mover. Se usa la velocidad
+      calibrada (°/s) para calcular el tiempo y parar al llegar.
+    </div>
+    <div id="deg-ctrls"></div>
+
+    <div class="info">
+      <span class="hl">Servo de velocidad.</span> Valor = segundos a girar (+ adelante / − atrás).
+      Suelta el slider para enviar. Teclado: mantén presionado.
+    </div>
+  </div>
+
+  <!-- ─── VISIÓN ───────────────────────────────────────────── -->
+  <div class="pane" id="pane-vision">
+    <div class="sec">Control por Posición de Mano</div>
+    <div class="info">
+      <span class="ac">Mueve la mano — el brazo la sigue.</span><br>
+      <span class="hl">X</span> → Base · <span class="hl">Y</span> → Hombro · <span class="hl">Z</span> → Codo<br>
+      Pulgar + Índice → Pinza. El robot va <span class="hl">lento</span> al destino.
+    </div>
+    <div class="sec">Cámara</div>
+    <div class="jb" style="padding:8px 11px">
+      <div class="jr" style="margin-bottom:5px"><span class="jn" style="font-size:11px">Dispositivo de video</span></div>
+      <select class="sel" id="sel-camera" style="width:100%;font-size:8.5px"><option value="">Cargando cámaras…</option></select>
+      <div style="font-family:var(--f-mono);font-size:7px;color:var(--ink4);margin-top:4px">Los nombres reales aparecen tras dar permiso</div>
+    </div>
+    <div class="br">
+      <button class="btn p f" id="btn-cam-start">▶ Iniciar cámara</button>
+      <button class="btn d f" id="btn-cam-stop" style="display:none">■ Detener</button>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-mirror" disabled style="opacity:.4">⇔ Espejo</button>
+    </div>
+    <div class="sec">Sensibilidad</div>
+    <div class="jb">
+      <div class="jr"><span class="jn">X → Base</span><span class="jv" id="lv-sens-x">120°</span></div>
+      <input type="range" id="sl-sens-x" min="30" max="180" value="120" step="5">
+      <div class="jlim"><span>Fino</span><span>Amplio</span></div>
+    </div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Y → Hombro</span><span class="jv" id="lv-sens-y">130°</span></div>
+      <input type="range" id="sl-sens-y" min="30" max="180" value="130" step="5">
+      <div class="jlim"><span>Fino</span><span>Amplio</span></div>
+    </div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Z → Codo</span><span class="jv" id="lv-sens-z">100°</span></div>
+      <input type="range" id="sl-sens-z" min="20" max="135" value="100" step="5">
+      <div class="jlim"><span>Poca</span><span>Total</span></div>
+    </div>
+    <div class="sec">Suavidad</div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Velocidad de respuesta</span><span class="jv" id="lv-smooth">0.93</span></div>
+      <input type="range" id="sl-smooth" min="0.70" max="0.98" value="0.93" step="0.01">
+      <div class="jlim"><span>Rápido</span><span>Lento</span></div>
+    </div>
+    <div class="jb">
+      <div class="jr"><span class="jn">Anti-ruido</span><span class="jv" id="lv-smooth2">0.85</span></div>
+      <input type="range" id="sl-smooth2" min="0.40" max="0.97" value="0.85" step="0.01">
+      <div class="jlim"><span>Reactivo</span><span>Estable</span></div>
+    </div>
+    <div class="sec">Lecturas</div>
+    <div class="dgrid">
+      <div class="dc"><div class="dcl">CONFIANZA</div><div class="dcv" id="p-conf">—</div></div>
+      <div class="dc"><div class="dcl">PINZA</div><div class="dcv" id="p-grip">—</div></div>
+      <div class="dc"><div class="dcl">POS X</div><div class="dcv" id="p-shy">—</div></div>
+      <div class="dc"><div class="dcl">POS Y</div><div class="dcv" id="p-shx">—</div></div>
+      <div class="dc"><div class="dcl">PROF Z</div><div class="dcv" id="p-elb">—</div></div>
+      <div class="dc"><div class="dcl">MUÑECA</div><div class="dcv" id="p-wri">—</div></div>
+    </div>
+  </div>
+
+  <!-- ─── CALIB ────────────────────────────────────────────── -->
+  <div class="pane" id="pane-calib">
+    <div class="sec">Límites Físicos — MG995</div>
+    <div class="info">Define los ángulos mínimo y máximo de cada articulación para <span class="ac">proteger los servos</span>.</div>
+    <div id="calib-wrap"></div>
+    <div class="sec">Operaciones</div>
+    <div class="br">
+      <button class="btn p f" id="btn-save-cal">Guardar</button>
+      <button class="btn gh" id="btn-load-cal">Cargar</button>
+    </div>
+    <div class="br">
+      <button class="btn f" id="btn-go-min">◀ Mínimos</button>
+      <button class="btn f" id="btn-go-max">Máximos ▶</button>
+    </div>
+    <button class="btn f" id="btn-reset-cal" style="margin-top:2px">Restaurar por defecto</button>
+  </div>
+
+  <!-- ─── ARDUINO ──────────────────────────────────────────── -->
+  <div class="pane" id="pane-arduino">
+  
+      <!-- ── TARJETA DE ESTADO ─────────────────────────── -->
+      <div class="ard-card" id="ard-status-card">
+        <div class="ard-top">
+          <div class="ard-indicator">
+            <div class="ard-dot" id="ard-dot"></div>
+            <span class="ard-ind-lbl" id="ard-ind-lbl">DESCONECTADO</span>
+          </div>
+          <div class="ard-baud-row">
+            <select class="sel ard-sel" id="sel-baud">
+              <option value="9600">9 600 bd</option>
+              <option value="57600">57 600 bd</option>
+              <option value="115200" selected>115 200 bd</option>
+            </select>
+            <button class="btn p ard-conn-btn" id="btn-conn">⚡ Conectar</button>
+          </div>
+        </div>
+        <!-- Metadatos visibles solo cuando está conectado -->
+        <div class="ard-meta" id="ard-meta" style="display:none">
+          <div class="ard-meta-r"><span class="ard-mk">PUERTO</span><span class="ard-mv" id="port-name">—</span></div>
+          <div class="ard-meta-r"><span class="ard-mk">ESTADO</span><span class="ard-mv" id="serial-txt">—</span></div>
+          <div class="ard-meta-r"><span class="ard-mk">PAQUETES</span><span class="ard-mv" id="ard-pkt-cnt">0</span></div>
+          <div class="ard-meta-r"><span class="ard-mk">LATENCIA</span><span class="ard-mv" id="ard-latency">—</span></div>
+        </div>
+      </div>
+  
+      <!-- ── ACCIONES RÁPIDAS ───────────────────────────── -->
+      <!-- Auto-inicio + HOME + PING + STOP de emergencia -->
+      <label class="ard-toggle-label">
+        <input type="checkbox" id="chk-autostart" checked class="ard-toggle-input">
+        <div class="ard-toggle-track"><div class="ard-toggle-thumb"></div></div>
+        <span class="ard-toggle-text">Auto-inicio — envía HOME al detectar READY</span>
+      </label>
+      <div class="br">
+        <button class="btn f" id="btn-home-ser"  disabled style="opacity:.4">↺ HOME</button>
+        <button class="btn f" id="btn-ping"       disabled style="opacity:.4">⚡ PING</button>
+        <button class="btn f" id="btn-emergency"  disabled style="opacity:.4;color:#903030;border-color:#B04040">■ STOP</button>
+      </div>
+  
+      <!-- Frecuencia de transmisión -->
+      <div class="jb">
+        <div class="jr"><span class="jn">Frecuencia de envío</span><span class="jv" id="lv-hz">20 Hz</span></div>
+        <input type="range" id="sl-hz" min="1" max="50" value="20" step="1">
+        <div class="jlim"><span>1 Hz — lento</span><span>50 Hz — máx</span></div>
+      </div>
+
+      <!-- Velocidad máxima de servos -->
+      <div class="jb">
+        <div class="jr"><span class="jn">Velocidad de servos</span><span class="jv" id="lv-spd">1.5 °/s</span></div>
+        <input type="range" id="sl-spd" min="0.5" max="15" value="1.5" step="0.5">
+        <div class="jlim"><span>0.5 °/s — ultra lento</span><span>15 °/s — máx</span></div>
+      </div>
+
+      <!-- ══════════════════════════════════════ SECCIÓN: MONITOR EN VIVO (colapsable) ══════════════════════════════════════ -->
+      <details class="ard-sect" open>
+        <summary class="ard-sect-hdr">
+          <span>Monitor en Vivo</span>
+          <span class="ard-sect-badge">Posición · PWM · Barra</span>
+        </summary>
+        <!-- Tabla de telemetría por servo -->
+        <div class="stg">
+          <div class="stg-head"><span>SERVO</span><span>CH</span><span>ÁNGULO</span><span>PWM</span><span>POSICIÓN</span></div>
+          <div class="stg-row" id="stg-base">
+            <span class="stg-nm">Base</span><span class="stg-ch">4</span>
+            <span class="stg-ang" id="stg-base-ang">90°</span>
+            <span class="stg-pwm" id="stg-base-pwm">350</span>
+            <div class="stg-bw"><div class="stg-bf" id="stg-base-bar" style="width:50%"></div><div class="stg-bc"></div></div>
+          </div>
+          <div class="stg-row" id="stg-sho">
+            <span class="stg-nm">Hombro</span><span class="stg-ch">3</span>
+            <span class="stg-ang" id="stg-sho-ang">90°</span>
+            <span class="stg-pwm" id="stg-sho-pwm">350</span>
+            <div class="stg-bw"><div class="stg-bf" id="stg-sho-bar" style="width:50%"></div></div>
+          </div>
+          <div class="stg-row" id="stg-elb">
+            <span class="stg-nm">Codo</span><span class="stg-ch">2</span>
+            <span class="stg-ang" id="stg-elb-ang">20°</span>
+            <span class="stg-pwm" id="stg-elb-pwm">169</span>
+            <div class="stg-bw"><div class="stg-bf" id="stg-elb-bar" style="width:15%"></div></div>
+          </div>
+          <div class="stg-row" id="stg-wri">
+            <span class="stg-nm">Muñeca</span><span class="stg-ch">1</span>
+            <span class="stg-ang" id="stg-wri-ang">90°</span>
+            <span class="stg-pwm" id="stg-wri-pwm">350</span>
+            <div class="stg-bw"><div class="stg-bf" id="stg-wri-bar" style="width:50%"></div><div class="stg-bc"></div></div>
+          </div>
+          <div class="stg-row" id="stg-grip">
+            <span class="stg-nm">Pinza</span><span class="stg-ch">0</span>
+            <span class="stg-ang" id="stg-grip-ang">5°</span>
+            <span class="stg-pwm" id="stg-grip-pwm">139</span>
+            <div class="stg-bw"><div class="stg-bf" id="stg-grip-bar" style="width:6%"></div></div>
+          </div>
+        </div>
+      </details>
+  
+      <!-- ══════════════════════════════════════ SECCIÓN: CONTROL INDIVIDUAL (colapsable) ══════════════════════════════════════ -->
+      <details class="ard-sect">
+        <summary class="ard-sect-hdr">
+          <span>Control Individual de Servos</span>
+          <span class="ard-sect-badge">Prueba · Barrido</span>
+        </summary>
+        <div class="ard-sect-body">
+          <div class="info" style="margin-bottom:6px">
+            Mueve cada servo directamente para verificar rangos de movimiento.
+            El comando se envía al Arduino en tiempo real si está conectado.
+          </div>
+          <!-- Slider + botón de sweep por cada servo -->
+          <div class="ard-servo-ctrl">
+            <span class="ard-sc-lbl">Base (CH4)</span>
+            <input type="range" id="ard-sl-base" class="ard-sl" min="-90" max="0" value="0" step="1">
+            <button class="btn" id="ard-sweep-base" title="Barrido completo">↔</button>
+          </div>
+          <div class="ard-servo-ctrl">
+            <span class="ard-sc-lbl">Hombro (CH3)</span>
+            <input type="range" id="ard-sl-sho" class="ard-sl" min="0" max="90" value="90" step="1">
+            <button class="btn" id="ard-sweep-sho" title="Barrido completo">↔</button>
+          </div>
+          <div class="ard-servo-ctrl">
+            <span class="ard-sc-lbl">Codo (CH2)</span>
+            <input type="range" id="ard-sl-elb" class="ard-sl" min="0" max="80" value="80" step="1">
+            <button class="btn" id="ard-sweep-elb" title="Barrido completo">↔</button>
+          </div>
+          <div class="ard-servo-ctrl">
+            <span class="ard-sc-lbl">Muñeca (CH1)</span>
+            <input type="range" id="ard-sl-wri" class="ard-sl" min="-90" max="100" value="0" step="1">
+            <button class="btn" id="ard-sweep-wri" title="Barrido completo">↔</button>
+          </div>
+          <div class="ard-servo-ctrl">
+            <span class="ard-sc-lbl">Pinza (CH0)</span>
+            <input type="range" id="ard-sl-grip" class="ard-sl" min="0" max="20" value="20" step="1">
+            <button class="btn" id="ard-sweep-grip" title="Barrido completo">↔</button>
+          </div>
+        </div>
+      </details>
+  
+      <!-- ══════════════════════════════════ SECCIÓN: POSICIONES PREDEFINIDAS (colapsable) ══════════════════════════════════ -->
+      <details class="ard-sect">
+        <summary class="ard-sect-hdr">
+          <span>Posiciones Predefinidas</span>
+          <span class="ard-sect-badge">4 slots</span>
+        </summary>
+        <div class="ard-sect-body">
+          <div class="info" style="margin-bottom:6px">
+            Guarda la posición actual del brazo con un nombre.
+            Los presets se guardan en el navegador.
+          </div>
+          <!-- Los slots se renderizan dinámicamente desde arduino.js -->
+          <div id="presets-wrap"></div>
+        </div>
+      </details>
+  
+      <!-- ══════════════════════════════════ SECCIÓN: CONEXIONES DE HARDWARE (colapsable) ══════════════════════════════════ -->
+      <details class="ard-sect">
+        <summary class="ard-sect-hdr">
+          <span>Conexiones de Hardware</span>
+          <span class="ard-sect-badge">Arduino · PCA9685 · MG995</span>
+        </summary>
+        <div class="ard-sect-body">
+  
+          <!-- Diagrama de flujo del sistema -->
+          <div class="ard-arch">
+            <div class="ard-node ard-node-pc"><span class="ard-ni">💻</span><span class="ard-nl">Navegador</span><span class="ard-ns">Web Serial</span></div>
+            <div class="ard-aw">USB</div>
+            <div class="ard-node ard-node-ard"><span class="ard-ni">⚡</span><span class="ard-nl">Arduino</span><span class="ard-ns">Uno / Mega</span></div>
+            <div class="ard-aw">I²C</div>
+            <div class="ard-node ard-node-pca"><span class="ard-ni">⊞</span><span class="ard-nl">PCA9685</span><span class="ard-ns">PWM 16ch</span></div>
+            <div class="ard-aw">PWM</div>
+            <div class="ard-node ard-node-mg"><span class="ard-ni">⚙</span><span class="ard-nl">5× MG995</span><span class="ard-ns">Servomotores</span></div>
+          </div>
+  
+          <!-- Tabla 1: Arduino → PCA9685 -->
+          <div class="wt">
+            <div class="wt-hdr"><span class="wt-from wt-from-ard">Arduino</span><span class="wt-ar">──── I²C ────▶</span><span class="wt-to wt-to-pca">PCA9685</span></div>
+            <div class="wt-r"><div class="wt-pin wp-red">5V</div><div class="wt-wire" style="background:#CC3030"></div><div class="wt-pin wp-red">VCC</div><div class="wt-d">Alimentación lógica 5V</div></div>
+            <div class="wt-r"><div class="wt-pin wp-blk">GND</div><div class="wt-wire" style="background:#505050"></div><div class="wt-pin wp-blk">GND</div><div class="wt-d">Tierra común</div></div>
+            <div class="wt-r"><div class="wt-pin wp-yel">SDA</div><div class="wt-wire" style="background:#C8A030"></div><div class="wt-pin wp-yel">SDA</div><div class="wt-d">Datos I²C · UNO: A4 · MEGA: pin 20</div></div>
+            <div class="wt-r"><div class="wt-pin wp-grn">SCL</div><div class="wt-wire" style="background:#50A870"></div><div class="wt-pin wp-grn">SCL</div><div class="wt-d">Reloj I²C · UNO: A5 · MEGA: pin 21</div></div>
+            <div class="wt-note">Dirección I²C: <code>0x40</code> (jumpers A0–A5 sin soldar)</div>
+          </div>
+  
+          <!-- Tabla 2: Fuente externa → PCA9685 -->
+          <div class="wt">
+            <div class="wt-hdr"><span class="wt-from wt-from-pwr">Fuente 6V / 8A</span><span class="wt-ar">────────────▶</span><span class="wt-to wt-to-pca">PCA9685</span></div>
+            <div class="wt-r"><div class="wt-pin wp-red">+ 6V</div><div class="wt-wire" style="background:#CC3030"></div><div class="wt-pin wp-red">V+</div><div class="wt-d">Rail de potencia para los 5 servos</div></div>
+            <div class="wt-r"><div class="wt-pin wp-blk">GND</div><div class="wt-wire" style="background:#505050"></div><div class="wt-pin wp-blk">GND</div><div class="wt-d">Tierra compartida con Arduino — obligatorio</div></div>
+            <div class="wt-note wt-note-warn">⚠ Los MG995 consumen hasta <strong>1.2A cada uno</strong>. Fuente mínima: <strong>6A</strong> para los 5 servos. <strong>No alimentes los servos desde el Arduino.</strong></div>
+          </div>
+  
+          <!-- Tabla 3: Canales PCA9685 → MG995 -->
+          <div class="wt">
+            <div class="wt-hdr"><span class="wt-from wt-from-pca">PCA9685</span><span class="wt-ar">──── PWM ────▶</span><span class="wt-to wt-to-mg">5× MG995</span></div>
+            <div class="wt-ch-h"><span>CH</span><span>SERVO</span><span>FUNCIÓN</span><span>RANGO</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 0</span><span class="wt-ch-s">Pinza</span><span class="wt-ch-f">Apertura de garra</span><span class="wt-ch-r">0°–90°</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 1</span><span class="wt-ch-s">Muñeca</span><span class="wt-ch-f">Rotación axial</span><span class="wt-ch-r">0°–180°</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 2</span><span class="wt-ch-s">Codo</span><span class="wt-ch-f">Flexión</span><span class="wt-ch-r">0°–135°</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 3</span><span class="wt-ch-s">Hombro</span><span class="wt-ch-f">Elevación del brazo</span><span class="wt-ch-r">0°–180°</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 4</span><span class="wt-ch-s">Base</span><span class="wt-ch-f">Rotación horizontal</span><span class="wt-ch-r">0°–180°</span></div>
+            <div class="wt-cable">
+              <span class="wt-cable-t">Cables MG995:</span>
+              <span><span class="wt-dot" style="background:#E06030"></span>Naranja → Señal (S)</span>
+              <span><span class="wt-dot" style="background:#CC3030"></span>Rojo → V+</span>
+              <span><span class="wt-dot" style="background:#404040"></span>Marrón → GND</span>
+            </div>
+          </div>
+  
+        </div>
+      </details>
+  
+      <!-- ══════════════════════════════════ SECCIÓN: CONSOLA SERIAL (colapsable, abierta) ══════════════════════════════════ -->
+      <details class="ard-sect" open>
+        <summary class="ard-sect-hdr">
+          <span>Consola Serial</span>
+          <span class="ard-sect-badge">TX · RX · Log</span>
+        </summary>
+        <div class="ard-sect-body">
+          <div id="slog"></div>
+          <div class="ard-cmd-row">
+            <input type="text" class="inp" id="inp-cmd" placeholder="B:90,H:90,C:20,W:90,G:0" style="flex:1">
+            <button class="btn gh" id="btn-send-raw">TX</button>
+            <button class="btn"    id="btn-clr">CLR</button>
+          </div>
+        </div>
+      </details>
+  
+      <!-- ══════════════════════════════════ SECCIÓN: FIRMWARE (colapsable) ══════════════════════════════════ -->
+      
+      <!-- ══ CONFIGURACIÓN DE CANALES PCA9685 ════════════════════ -->
+      <details class="ard-sect" open>
+        <summary class="ard-sect-hdr">
+          <span>Asignación de Canales PCA9685</span>
+          <span class="ard-sect-badge">Configurable · Auto-firmware</span>
+        </summary>
+        <div class="ard-sect-body">
+
+          <!-- Descripción -->
+          <div class="chan-info">
+            Asigna cada servo al canal físico del PCA9685 donde está conectado.
+            El firmware se genera automáticamente con tu configuración.
+            <strong>No puede haber dos servos en el mismo canal.</strong>
+          </div>
+
+          <!-- Tabla de asignación -->
+          <div class="chan-table">
+            <div class="chan-head">
+              <span>SERVO</span>
+              <span>FUNCIÓN</span>
+              <span>CANAL PCA9685</span>
+              <span>RANGO</span>
+            </div>
+
+            <!-- Fila: Base -->
+            <div class="chan-row" id="chanrow-base">
+              <div class="chan-servo">
+                <span class="chan-dot" style="background:var(--g)"></span>
+                Base
+              </div>
+              <div class="chan-fn">Rotación horizontal</div>
+              <div class="chan-sel-wrap">
+                <select class="sel chan-sel" id="chan-base" data-servo="base">
+                  <option value="0">Canal 0</option>
+                  <option value="1">Canal 1</option>
+                  <option value="2">Canal 2</option>
+                  <option value="3">Canal 3</option>
+                  <option value="4" selected>Canal 4</option>
+                </select>
+              </div>
+              <div class="chan-range">0°–180°</div>
+            </div>
+
+            <!-- Fila: Hombro -->
+            <div class="chan-row" id="chanrow-sho">
+              <div class="chan-servo">
+                <span class="chan-dot" style="background:#D4A030"></span>
+                Hombro
+              </div>
+              <div class="chan-fn">Elevación del brazo</div>
+              <div class="chan-sel-wrap">
+                <select class="sel chan-sel" id="chan-sho" data-servo="sho">
+                  <option value="0">Canal 0</option>
+                  <option value="1">Canal 1</option>
+                  <option value="2">Canal 2</option>
+                  <option value="3" selected>Canal 3</option>
+                  <option value="4">Canal 4</option>
+                </select>
+              </div>
+              <div class="chan-range">0°–180°</div>
+            </div>
+
+            <!-- Fila: Codo -->
+            <div class="chan-row" id="chanrow-elb">
+              <div class="chan-servo">
+                <span class="chan-dot" style="background:#4A8AB0"></span>
+                Codo
+              </div>
+              <div class="chan-fn">Flexión del codo</div>
+              <div class="chan-sel-wrap">
+                <select class="sel chan-sel" id="chan-elb" data-servo="elb">
+                  <option value="0">Canal 0</option>
+                  <option value="1">Canal 1</option>
+                  <option value="2" selected>Canal 2</option>
+                  <option value="3">Canal 3</option>
+                  <option value="4">Canal 4</option>
+                </select>
+              </div>
+              <div class="chan-range">0°–135°</div>
+            </div>
+
+            <!-- Fila: Muñeca -->
+            <div class="chan-row" id="chanrow-wri">
+              <div class="chan-servo">
+                <span class="chan-dot" style="background:#6A8840"></span>
+                Muñeca
+              </div>
+              <div class="chan-fn">Rotación axial</div>
+              <div class="chan-sel-wrap">
+                <select class="sel chan-sel" id="chan-wri" data-servo="wri">
+                  <option value="0">Canal 0</option>
+                  <option value="1" selected>Canal 1</option>
+                  <option value="2">Canal 2</option>
+                  <option value="3">Canal 3</option>
+                  <option value="4">Canal 4</option>
+                </select>
+              </div>
+              <div class="chan-range">0°–180°</div>
+            </div>
+
+            <!-- Fila: Pinza -->
+            <div class="chan-row" id="chanrow-grip">
+              <div class="chan-servo">
+                <span class="chan-dot" style="background:#A83030"></span>
+                Pinza
+              </div>
+              <div class="chan-fn">Apertura de garra</div>
+              <div class="chan-sel-wrap">
+                <select class="sel chan-sel" id="chan-grip" data-servo="grip">
+                  <option value="0" selected>Canal 0</option>
+                  <option value="1">Canal 1</option>
+                  <option value="2">Canal 2</option>
+                  <option value="3">Canal 3</option>
+                  <option value="4">Canal 4</option>
+                </select>
+              </div>
+              <div class="chan-range">0°–90°</div>
+            </div>
+
+          </div><!-- /chan-table -->
+
+          <!-- Estado de validación + acciones -->
+          <div class="chan-footer">
+            <div class="chan-status" id="chan-status">
+              <span class="chan-ok" id="chan-ok">✓ Configuración válida</span>
+            </div>
+            <div class="chan-actions">
+              <button class="btn gh" id="btn-chan-save">💾 Guardar</button>
+              <button class="btn" id="btn-chan-reset">↺ Restablecer</button>
+            </div>
+          </div>
+
+        </div>
+      </details>
+
+      <details class="ard-sect">
+        <summary class="ard-sect-hdr">
+          <span>Firmware Arduino v3.1</span>
+          <span class="ard-sect-badge">PCA9685 · MG995</span>
+        </summary>
+        <div class="ard-sect-body">
+          <div class="ard-fw-hdr">
+            <span class="ard-fw-lbl">Firmware generado</span>
+            <button class="btn gh" id="btn-copy-fw">⎘ Copiar</button>
+            <button class="btn" id="btn-dl-fw" title="Descargar .ino para subir con Arduino IDE">⬇ Descargar .ino</button>
+            <button class="btn p" id="btn-upload-fw" title="Subir firmware al Arduino directamente desde la página (requiere servidor local — te guiaremos si no está)">⬆ Subir al Arduino</button>
+            <span id="upload-progress" style="font-family:var(--f-mono);font-size:9px;color:var(--ok);min-width:28px"></span>
+          </div>
+          <div class="fwcode" id="fw"></div>
+          <!-- Guía de instalación -->
+          <div class="ard-steps">
+            <div class="ard-step"><span class="ard-sn">1</span><span>IDE → <strong>Herramientas → Gestor de librerías</strong> → instalar <code>Adafruit PWM Servo Driver</code></span></div>
+            <div class="ard-step"><span class="ard-sn">2</span><span>Seleccionar placa: <strong>Arduino Uno</strong> (o Mega) y el puerto COM correcto</span></div>
+            <div class="ard-step"><span class="ard-sn">3</span><span>Compilar y subir → al ver <em>"READY IPN-RoboArm v3.1"</em> en el monitor serial, está listo</span></div>
+            <div class="ard-step"><span class="ard-sn">4</span><span>Abrir esta página en <code>Chrome/Edge ≥ 89</code> (HTTPS o localhost) → ⚡ Conectar</span></div>
+          </div>
+        </div>
+      </details>
+  
+    </div><!-- /pane-arduino -->
+
+</aside>
+
+<!-- ─── FOOTER ────────────────────────────────────────────── -->
+<footer>
+  <span class="ft">RoboArm IPN v10</span>
+  <span class="ft d" id="ft-mode">Modo: Manual</span>
+  <span class="ft d" id="ft-ser">Serial: —</span>
+  <span id="ft-ang">B:0° H:90° C:20° W:0° G:5°</span>
+</footer>
+</div><!-- /app -->
+
+<!-- Nav móvil -->
+<nav id="nav-bar">
+  <button class="nav-btn active" data-t="manual"><span class="ni">⚙</span><span class="nl">MANUAL</span></button>
+  <button class="nav-btn" data-t="vision"><span class="ni">◉</span><span class="nl">VISIÓN</span></button>
+  <button class="nav-btn" data-t="calib"><span class="ni">⊞</span><span class="nl">CALIB</span></button>
+  <button class="nav-btn" data-t="arduino"><span class="ni">⚡</span><span class="nl">ARDUINO</span></button>
+</nav>
+
+<!-- Modal -->
+<div id="modalbg">
+  <div class="modal">
+    <h3 id="modal-t">Aviso</h3>
+    <p id="modal-b"></p>
+    <button class="btn p" onclick="document.getElementById('modalbg').classList.remove('show')">Cerrar</button>
+  </div>
+</div>
+
+<!-- Librerías externas (antes que los módulos que las usan) -->
+<script src="flasher.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<!-- Módulos de la aplicación -->
+<script src="shared.js"></script>
+<script src="arm3d.js"></script>
+<script src="manual.js"></script>
+<script src="vision.js"></script>
+<script src="arduino.js"></script>
+<script src="calibration.js"></script>
+</body>
+</html>
