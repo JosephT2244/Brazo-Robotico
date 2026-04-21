@@ -14,12 +14,33 @@ const CAL_KEY = 'roboarm-ipn-v10-calib';
 
 /* Valores por defecto (iguales a JDEFS — rango completo de los servos) */
 const CAL_DEFAULTS = {
-  base: { min: -90, max: 0   },
-  sho:  { min: 0,   max: 90  },
-  elb:  { min: 0,   max: 80  },
-  wri:  { min: -90, max: 100 },
-  grip: { min: 0,   max: 20  },
+  base: { min: -90, max:  90 },
+  sho:  { min: -45, max:  45 },
+  elb:  { min: -30, max:  30 },
+  wri:  { min: -90, max:  90 },
+  grip: { min: -30, max:  30 },
 };
+const HOME_DEFAULTS = {
+  base: 0,
+  sho:  0,
+  elb:  0,
+  wri:  0,
+  grip: 0,
+};
+
+function normalizeCalRange(key, min, max) {
+  const def = CAL_DEFAULTS[key];
+  if (!def) return { min, max, migrated: false };
+
+  // Migra automáticamente el rango viejo de la UI manual (−10° a +10°),
+  // que dejaba al control manual con solo 20° totales aunque el joint
+  // real admitiera más recorrido.
+  if (min === -10 && max === 10 && (def.min !== -10 || def.max !== 10)) {
+    return { min: def.min, max: def.max, migrated: true };
+  }
+
+  return { min, max, migrated: false };
+}
 
 
 /* ──────────────────────────────────────────────────────────────
@@ -32,18 +53,18 @@ function buildCalibUI() {
     <div class="cb">
       <div class="cbn">${d.lbl}</div>
       <div class="cgr">
-        <span class="clb">Mín s</span>
-        <input type="number" class="inp-n" id="cm-${d.key}" value="${J[d.key].calMin}">
-        <span class="cu">s</span>
+        <span class="clb">Mín °</span>
+        <input type="number" class="inp-n" id="cm-${d.key}" value="${J[d.key].calMin}" min="${-d.angLim}" max="${d.angLim}" step="1">
+        <span class="cu">°</span>
       </div>
       <div class="cgr">
-        <span class="clb">Máx s</span>
-        <input type="number" class="inp-n" id="cx-${d.key}" value="${J[d.key].calMax}">
-        <span class="cu">s</span>
+        <span class="clb">Máx °</span>
+        <input type="number" class="inp-n" id="cx-${d.key}" value="${J[d.key].calMax}" min="${-d.angLim}" max="${d.angLim}" step="1">
+        <span class="cu">°</span>
       </div>
       <div class="cgr">
         <span class="clb">Vel</span>
-        <input type="number" class="inp-n" id="dps-${d.key}" value="${J[d.key].dps}" min="1" max="360" step="1">
+        <input type="number" class="inp-n" id="dps-${d.key}" value="${J[d.key].dps.toFixed(1)}" min="${MIN_SPEED_DPS}" max="60" step="0.5">
         <span class="cu">°/s</span>
       </div>
       <div class="cgr" style="grid-template-columns:auto 28px 1fr 28px auto">
@@ -60,6 +81,55 @@ function buildCalibUI() {
       </div>
     </div>`
   ).join('');
+}
+
+function buildHomeUI() {
+  const wrap = document.getElementById('home-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = JDEFS.map(d => `
+    <div class="cb">
+      <div class="cbn">${d.lbl}</div>
+      <div class="cgr">
+        <span class="clb">HOME °</span>
+        <input type="number" class="inp-n" id="hm-${d.key}" value="${getJointHome(d.key)}" min="${-d.angLim}" max="${d.angLim}" step="1">
+        <span class="cu">°</span>
+      </div>
+      <div class="cgr" style="grid-template-columns:1fr 1fr">
+        <button class="btn" data-home-current="${d.key}">Usar actual</button>
+        <button class="btn gh" data-home-go="${d.key}">Ir HOME</button>
+      </div>
+    </div>`
+  ).join('');
+}
+
+function refreshHomeInputs() {
+  JDEFS.forEach(d => {
+    const inp = document.getElementById('hm-' + d.key);
+    if (!inp) return;
+    inp.min = String(-d.angLim);
+    inp.max = String(d.angLim);
+    inp.step = '1';
+    inp.value = String(getJointHome(d.key));
+  });
+}
+
+function applyHomeCalib() {
+  let allValid = true;
+
+  JDEFS.forEach(d => {
+    const inp = document.getElementById('hm-' + d.key);
+    if (!inp) return;
+    const raw = parseFloat(inp.value);
+    if (isNaN(raw) || raw < -d.angLim || raw > d.angLim) {
+      log(`HOME inválido en ${d.lbl}: debe estar entre ${-d.angLim}° y ${d.angLim}°`, 'err');
+      allValid = false;
+      return;
+    }
+    inp.value = String(setJointHome(d.key, raw));
+  });
+
+  refreshHomeInputs();
+  return allValid;
 }
 
 /* Trim manual: ajusta el neutro ±1 y lo envía en caliente al Arduino */
@@ -81,7 +151,7 @@ async function autoTrimNeu(key) {
   if (typeof writer === 'undefined' || !writer) {
     log('Conecta el Arduino primero para auto-trim', 'err'); return;
   }
-  setJoint(key, 0);
+  setJointTarget(key, J[key].angPos);
   if (!confirm(
     `Auto-trim de ${key.toUpperCase()}\n\n` +
     `Voy a barrer el PWM neutro de 290 a 320 lentamente.\n` +
@@ -113,7 +183,7 @@ async function autoTrimAll() {
   if (typeof writer === 'undefined' || !writer) {
     log('Conecta el Arduino primero', 'err'); return;
   }
-  for (const d of JDEFS) setJoint(d.key, 0);
+  for (const d of JDEFS) setJointTarget(d.key, J[d.key].angPos);
   log('Todos los servos "parados" — ajusta cada ◀/▶ hasta que no giren', 'info');
   sendNeutrals();
 }
@@ -128,16 +198,26 @@ async function measureDps(key) {
   }
   const TEST_SECS = 3.0;
   log(`Midiendo ${key}: gira ${TEST_SECS}s…`, 'info');
-  setJoint(key, TEST_SECS);
+  // Pausar el ciclo de commit mientras medimos, para que no envíe pulsos propios
+  // que interrumpan el test de 3 segundos continuos.
+  if (typeof serialT !== 'undefined' && serialT) { clearInterval(serialT); serialT = null; }
+  const ch = ({ base:'B', sho:'H', elb:'C', wri:'W', grip:'G' })[key];
+  await sendRaw(`${ch}:${TEST_SECS.toFixed(3)}`);
   await new Promise(r => setTimeout(r, TEST_SECS * 1000 + 200));
-  setJoint(key, 0);
+  await sendRaw(`${ch}:0.000`);
+  // Reactivar el intervalo de envío periódico
+  if (typeof serialT !== 'undefined' && !serialT && typeof sendPos === 'function') {
+    serialT = setInterval(sendPos, Math.round(1000 / (serialHz || 20)));
+  }
   const ans = prompt(`¿Cuántos GRADOS se movió ${key.toUpperCase()} en ${TEST_SECS}s?`, '');
   const deg = parseFloat(ans);
   if (!isNaN(deg) && deg > 0) {
-    J[key].dps = deg / TEST_SECS;
+    const measuredDps = deg / TEST_SECS;
+    J[key].dpsBase = measuredDps / (speedDps / DEFAULT_SPEED_DPS);
+    applySpeedProfile(speedDps);
     document.getElementById('dps-' + key).value = J[key].dps.toFixed(1);
     saveDps();
-    log(`${key} calibrado: ${J[key].dps.toFixed(1)} °/s`, 'ok');
+    log(`${key} calibrado: ${measuredDps.toFixed(1)} °/s`, 'ok');
   } else {
     log('Medición cancelada', 'info');
   }
@@ -167,7 +247,10 @@ function applyCalib() {
     if (!isNaN(nu) && nu >= 260 && nu <= 360) neutrals[d.key] = nu;
 
     // Validación: números válidos y mínimo < máximo
-    if (isNaN(mn) || isNaN(mx) || mn >= mx) {
+    if (
+      isNaN(mn) || isNaN(mx) || mn >= mx ||
+      mn < -d.angLim || mx > d.angLim
+    ) {
       log(`Rango inválido en ${d.lbl}: mín debe ser < máx`, 'err');
       allValid = false;
       return;
@@ -176,11 +259,15 @@ function applyCalib() {
     // Actualizar límites en el estado global
     J[d.key].calMin = mn;
     J[d.key].calMax = mx;
-    if (!isNaN(dp) && dp > 0) J[d.key].dps = dp;
+    if (!isNaN(dp) && dp > 0) {
+      J[d.key].dpsBase = dp / (speedDps / DEFAULT_SPEED_DPS);
+    }
 
     // Actualizar el slider manual para que refleje los nuevos límites
-    const sl = document.getElementById('sl-' + d.key);
-    if (sl) { sl.min = mn; sl.max = mx; }
+    ['sl-', 'ard-sl-'].forEach(prefix => {
+      const sl = document.getElementById(prefix + d.key);
+      if (sl) { sl.min = mn; sl.max = mx; }
+    });
 
     // Actualizar las etiquetas de límites visibles debajo del slider
     const lmin = document.getElementById('lm-' + d.key + '-min');
@@ -189,9 +276,17 @@ function applyCalib() {
     if (lmax) lmax.textContent = mx + '°';
 
     // Re-clampear el valor actual al nuevo rango (si estaba fuera de límites)
-    setJoint(d.key, J[d.key].v);
+    setJointHome(d.key, getJointHome(d.key));
+    _setJointTargetRaw(d.key, clampJointDeg(d.key, J[d.key].target));
+    J[d.key].angPos = clampJointDeg(d.key, J[d.key].angPos);
+    J[d.key].committed = clampJointDeg(d.key, J[d.key].committed);
   });
 
+  if (allValid) {
+    applySpeedProfile(speedDps);
+    if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
+    refreshHomeInputs();
+  }
   return allValid;
 }
 
@@ -201,16 +296,23 @@ function applyCalib() {
    Aplica y persiste en localStorage.
    ────────────────────────────────────────────────────────────── */
 document.getElementById('btn-save-cal').addEventListener('click', () => {
-  if (!applyCalib()) return;  // No guardar si hay errores
+  if (!applyCalib() || !applyHomeCalib()) return;  // No guardar si hay errores
   if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al guardar
   const data = {};
-  JDEFS.forEach(x => { data[x.key] = { min: J[x.key].calMin, max: J[x.key].calMax, dps: J[x.key].dps }; });
+  JDEFS.forEach(x => {
+    data[x.key] = {
+      min: J[x.key].calMin,
+      max: J[x.key].calMax,
+      dps: J[x.key].dpsBase,
+      home: getJointHome(x.key),
+    };
+  });
   try {
     localStorage.setItem(CAL_KEY, JSON.stringify(data));
     saveDps();
     saveNeutrals();
     if (typeof sendNeutrals === 'function') sendNeutrals();
-    log('Calibración guardada — mueve un slider o usa "mover grados"', 'ok');
+    log('Calibración y HOME guardados — mueve un slider o usa "mover grados"', 'ok');
   } catch (e) {
     log('Error al guardar calibración', 'err');
   }
@@ -226,19 +328,39 @@ document.getElementById('btn-load-cal').addEventListener('click', () => {
     const saved = localStorage.getItem(CAL_KEY);
     if (!saved) { log('No hay calibración guardada', 'err'); return; }
     const data = JSON.parse(saved);
+    let migrated = false;
     JDEFS.forEach(x => {
       if (data[x.key]) {
-        document.getElementById('cm-' + x.key).value = data[x.key].min;
-        document.getElementById('cx-' + x.key).value = data[x.key].max;
+        const parsedMin = parseFloat(data[x.key].min);
+        const parsedMax = parseFloat(data[x.key].max);
+        const fixed = normalizeCalRange(x.key, parsedMin, parsedMax);
+        document.getElementById('cm-' + x.key).value = fixed.min;
+        document.getElementById('cx-' + x.key).value = fixed.max;
+        if (fixed.migrated) {
+          data[x.key].min = fixed.min;
+          data[x.key].max = fixed.max;
+          migrated = true;
+        }
         if (data[x.key].dps) {
           const el = document.getElementById('dps-' + x.key);
-          if (el) el.value = data[x.key].dps;
+          if (el) el.value = (data[x.key].dps * (speedDps / DEFAULT_SPEED_DPS)).toFixed(1);
+        }
+        if (typeof data[x.key].home === 'number') {
+          const homeEl = document.getElementById('hm-' + x.key);
+          if (homeEl) homeEl.value = data[x.key].home;
+        } else {
+          data[x.key].home = HOME_DEFAULTS[x.key];
         }
       }
     });
-    applyCalib();
+    if (!applyCalib() || !applyHomeCalib()) return;
     if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al cargar
-    log('Calibración cargada — mueve un slider para enviar al Arduino', 'ok');
+    if (migrated) {
+      try { localStorage.setItem(CAL_KEY, JSON.stringify(data)); } catch (e) {}
+      log('Calibración cargada y rango manual antiguo corregido automáticamente', 'ok');
+    } else {
+      log('Calibración y HOME cargados — mueve un slider para enviar al Arduino', 'ok');
+    }
   } catch (e) {
     log('Error al cargar calibración', 'err');
   }
@@ -252,10 +374,15 @@ document.getElementById('btn-reset-cal').addEventListener('click', () => {
   JDEFS.forEach(d => {
     document.getElementById('cm-' + d.key).value = CAL_DEFAULTS[d.key].min;
     document.getElementById('cx-' + d.key).value = CAL_DEFAULTS[d.key].max;
+    const dpsEl = document.getElementById('dps-' + d.key);
+    if (dpsEl) dpsEl.value = J[d.key].dps.toFixed(1);
+    const homeEl = document.getElementById('hm-' + d.key);
+    if (homeEl) homeEl.value = HOME_DEFAULTS[d.key];
   });
   applyCalib();
+  applyHomeCalib();
   if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al restaurar
-  log('Calibración restaurada a valores por defecto', 'info');
+  log('Calibración y HOME restaurados a valores por defecto', 'info');
 });
 
 
@@ -265,12 +392,36 @@ document.getElementById('btn-reset-cal').addEventListener('click', () => {
    Útil para verificar el rango real del hardware.
    ────────────────────────────────────────────────────────────── */
 document.getElementById('btn-go-min').addEventListener('click', () => {
-  JDEFS.forEach(d => setJoint(d.key, J[d.key].calMin));
+  JDEFS.forEach(d => setJointTarget(d.key, J[d.key].calMin));
   log('Moviendo a posiciones mínimas', 'info');
 });
 document.getElementById('btn-go-max').addEventListener('click', () => {
-  JDEFS.forEach(d => setJoint(d.key, J[d.key].calMax));
+  JDEFS.forEach(d => setJointTarget(d.key, J[d.key].calMax));
   log('Moviendo a posiciones máximas', 'info');
+});
+
+document.getElementById('btn-capture-home').addEventListener('click', () => {
+  const pose = captureCurrentPoseAsHome();
+  JDEFS.forEach(d => {
+    const inp = document.getElementById('hm-' + d.key);
+    if (inp) inp.value = String(pose[d.key]);
+  });
+  log('Pose actual capturada como HOME de referencia — pulsa Guardar para dejarla fija', 'ok');
+});
+
+document.getElementById('btn-go-home-ref').addEventListener('click', () => {
+  if (!applyHomeCalib()) return;
+  moveToHomePose();
+  log('Moviendo al HOME de referencia', 'info');
+});
+
+document.getElementById('btn-reset-home').addEventListener('click', () => {
+  JDEFS.forEach(d => {
+    const inp = document.getElementById('hm-' + d.key);
+    if (inp) inp.value = HOME_DEFAULTS[d.key];
+  });
+  applyHomeCalib();
+  log('HOME de referencia restaurado a 0°', 'info');
 });
 
 
@@ -279,6 +430,27 @@ document.getElementById('btn-go-max').addEventListener('click', () => {
    Construir la UI y cargar calibración previa si existe.
    ────────────────────────────────────────────────────────────── */
 buildCalibUI();
+buildHomeUI();
+refreshHomeInputs();
+
+document.getElementById('home-wrap').addEventListener('click', e => {
+  const currentBtn = e.target.closest('button[data-home-current]');
+  if (currentBtn) {
+    const key = currentBtn.dataset.homeCurrent;
+    setJointHome(key, J[key].angPos);
+    refreshHomeInputs();
+    log(`${key}: HOME de referencia = posición actual`, 'ok');
+    return;
+  }
+
+  const goBtn = e.target.closest('button[data-home-go]');
+  if (goBtn) {
+    const key = goBtn.dataset.homeGo;
+    if (!applyHomeCalib()) return;
+    setJointTarget(key, getJointHome(key));
+    log(`${key}: moviendo a HOME de referencia`, 'info');
+  }
+});
 
 // Listener: cualquier cambio en el input del neutro → aplica en caliente
 document.getElementById('calib-wrap').addEventListener('change', e => {
@@ -297,14 +469,36 @@ try {
   const saved = localStorage.getItem(CAL_KEY);
   if (saved) {
     const data = JSON.parse(saved);
+    let migrated = false;
+    const normalized = {};
     JDEFS.forEach(x => {
       if (data[x.key]) {
-        J[x.key].calMin = data[x.key].min;
-        J[x.key].calMax = data[x.key].max;
+        const parsedMin = parseFloat(data[x.key].min);
+        const parsedMax = parseFloat(data[x.key].max);
+        if (!isFinite(parsedMin) || !isFinite(parsedMax)) return;
+        const fixed = normalizeCalRange(x.key, parsedMin, parsedMax);
+        J[x.key].calMin = fixed.min;
+        J[x.key].calMax = fixed.max;
+        const home = typeof data[x.key].home === 'number' ? data[x.key].home : HOME_DEFAULTS[x.key];
+        setJointHome(x.key, home);
+        normalized[x.key] = { ...data[x.key], min: fixed.min, max: fixed.max, home };
+        migrated ||= fixed.migrated;
+        if (typeof data[x.key].dps === 'number' && data[x.key].dps > 0) {
+          J[x.key].dpsBase = data[x.key].dps;
+        }
       }
     });
+    applySpeedProfile(speedDps);
     buildCalibUI();  // Reconstruir con los valores cargados
-    log('Calibración previa restaurada automáticamente', 'info');
+    buildHomeUI();
+    refreshHomeInputs();
+    if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
+    if (migrated) {
+      try { localStorage.setItem(CAL_KEY, JSON.stringify(normalized)); } catch (e) {}
+      log('Calibración previa restaurada y rango manual antiguo corregido automáticamente', 'info');
+    } else {
+      log('Calibración previa y HOME restaurados automáticamente', 'info');
+    }
   }
 } catch (e) {
   /* Si hay un error en el JSON guardado, simplemente usar los valores por defecto */

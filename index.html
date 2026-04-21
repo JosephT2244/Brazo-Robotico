@@ -56,10 +56,10 @@
   <!-- HUD ángulos actuales -->
   <div id="hud">
     <div class="hrow"><span>Base</span>   <span class="hv" id="h-base">0°</span></div>
-    <div class="hrow"><span>Hombro</span> <span class="hv" id="h-sho">90°</span></div>
-    <div class="hrow"><span>Codo</span>   <span class="hv" id="h-elb">20°</span></div>
+    <div class="hrow"><span>Hombro</span> <span class="hv" id="h-sho">0°</span></div>
+    <div class="hrow"><span>Codo</span>   <span class="hv" id="h-elb">0°</span></div>
     <div class="hrow"><span>Muñeca</span> <span class="hv" id="h-wri">0°</span></div>
-    <div class="hrow"><span>Pinza</span>  <span class="hv" id="h-grip">5°</span></div>
+    <div class="hrow"><span>Pinza</span>  <span class="hv" id="h-grip">0°</span></div>
   </div>
 
   <!-- HUD visión (posición de mano) -->
@@ -151,45 +151,50 @@
     <div class="sec">Control de Articulaciones</div>
     <div class="jb" id="jb-base">
       <div class="jr"><span class="jn">Base — Rotación</span><span class="jk">Q / A</span><span class="jv" id="lv-base">■</span></div>
-      <input type="range" id="sl-base" min="-10" max="10" value="0" step="0.5">
-      <div class="jlim"><span id="lm-base-min">−10s</span><span id="lm-base-max">+10s</span></div>
+      <input type="range" id="sl-base" min="-90" max="90" value="0" step="1">
+      <div class="jlim"><span id="lm-base-min">−90°</span><span id="lm-base-max">+90°</span></div>
     </div>
     <div class="jb" id="jb-sho">
       <div class="jr"><span class="jn">Hombro — Elevación</span><span class="jk">W / S</span><span class="jv" id="lv-sho">■</span></div>
-      <input type="range" id="sl-sho" min="-10" max="10" value="0" step="0.5">
-      <div class="jlim"><span id="lm-sho-min">−10s</span><span id="lm-sho-max">+10s</span></div>
+      <input type="range" id="sl-sho" min="-45" max="45" value="0" step="1">
+      <div class="jlim"><span id="lm-sho-min">−45°</span><span id="lm-sho-max">+45°</span></div>
     </div>
     <div class="jb" id="jb-elb">
       <div class="jr"><span class="jn">Codo — Flexión</span><span class="jk">E / D</span><span class="jv" id="lv-elb">■</span></div>
-      <input type="range" id="sl-elb" min="-10" max="10" value="0" step="0.5">
-      <div class="jlim"><span id="lm-elb-min">−10s</span><span id="lm-elb-max">+10s</span></div>
+      <input type="range" id="sl-elb" min="-30" max="30" value="0" step="1">
+      <div class="jlim"><span id="lm-elb-min">−30°</span><span id="lm-elb-max">+30°</span></div>
     </div>
     <div class="jb" id="jb-wri">
       <div class="jr"><span class="jn">Muñeca — Rotación axial</span><span class="jk">R / F</span><span class="jv" id="lv-wri">■</span></div>
-      <input type="range" id="sl-wri" min="-10" max="10" value="0" step="0.5">
-      <div class="jlim"><span id="lm-wri-min">−10s</span><span id="lm-wri-max">+10s</span></div>
+      <input type="range" id="sl-wri" min="-90" max="90" value="0" step="1">
+      <div class="jlim"><span id="lm-wri-min">−90°</span><span id="lm-wri-max">+90°</span></div>
     </div>
     <div class="jb" id="jb-grip">
       <div class="jr"><span class="jn">Pinza — Apertura</span><span class="jk">T / G</span><span class="jv" id="lv-grip">■</span></div>
-      <input type="range" id="sl-grip" min="-10" max="10" value="0" step="0.5">
-      <div class="jlim"><span id="lm-grip-min">−10s</span><span id="lm-grip-max">+10s</span></div>
+      <input type="range" id="sl-grip" min="-30" max="30" value="0" step="1">
+      <div class="jlim"><span id="lm-grip-min">−30°</span><span id="lm-grip-max">+30°</span></div>
     </div>
     <div class="br">
       <button class="btn f" id="btn-reset">■ Parar todo</button>
       <button class="btn p" id="btn-home">↺ HOME</button>
     </div>
 
-    <div class="sec">Mover en grados (preciso)</div>
+    <div class="sec">Mover en grados (por pasos)</div>
     <div class="info" style="margin-bottom:8px">
-      Escribe cuántos <span class="hl">grados exactos</span> mover. Se usa la velocidad
-      calibrada (°/s) para calcular el tiempo y parar al llegar.
+      Escribe cuántos grados mover. En modo manual los comandos se redondean a
+      <span class="hl">pasos de 10°</span> y se ejecutan uno por uno usando la velocidad
+      calibrada (°/s) para mover y detener el servo al terminar cada paso.<br>
+      Rangos totales por articulación: <span class="hl">Base 180°</span>, <span class="hl">Hombro 90°</span>,
+      <span class="hl">Codo 60°</span>, <span class="hl">Muñeca 180°</span>, <span class="hl">Pinza 60°</span>.
     </div>
     <div id="deg-ctrls"></div>
 
     <div class="info">
       <span class="hl">Control por grados.</span> El slider fija el <b>ángulo objetivo</b>;
       el sistema convierte internamente a segundos usando la velocidad calibrada (°/s).
-      Teclado: mantén presionado para ir al extremo, suelta para parar.
+      Teclado y botones rápidos: cada click avanza <b>10°</b>; si mandas varios, se ejecutan
+      <b>uno por uno</b> para que el servo se mueva, se detenga y espere el siguiente comando.
+      Si escribes una orden grande, también se parte internamente en bloques de <b>10°</b>.
     </div>
   </div>
 
@@ -198,7 +203,7 @@
     <div class="sec">Control por Posición de Mano</div>
     <div class="info">
       <span class="ac">Mueve la mano — el brazo la sigue.</span><br>
-      <span class="hl">X</span> → Base · <span class="hl">Y</span> → Hombro · <span class="hl">Z</span> → Codo<br>
+      Base: <span class="hl">solo teclado Q/A</span> · <span class="hl">Y</span> → Hombro · <span class="hl">Z</span> → Codo<br>
       Pulgar + Índice → Pinza. El robot va <span class="hl">lento</span> al destino.
     </div>
     <div class="sec">Cámara</div>
@@ -216,9 +221,9 @@
     </div>
     <div class="sec">Sensibilidad</div>
     <div class="jb">
-      <div class="jr"><span class="jn">X → Base</span><span class="jv" id="lv-sens-x">120°</span></div>
+      <div class="jr"><span class="jn">Base (solo Q/A)</span><span class="jv" id="lv-sens-x">Q/A</span></div>
       <input type="range" id="sl-sens-x" min="30" max="180" value="120" step="5">
-      <div class="jlim"><span>Fino</span><span>Amplio</span></div>
+      <div class="jlim"><span>Bloq.</span><span>Bloq.</span></div>
     </div>
     <div class="jb">
       <div class="jr"><span class="jn">Y → Hombro</span><span class="jv" id="lv-sens-y">130°</span></div>
@@ -257,6 +262,18 @@
     <div class="sec">Límites Físicos — MG995</div>
     <div class="info">Define los ángulos mínimo y máximo de cada articulación para <span class="ac">proteger los servos</span>.</div>
     <div id="calib-wrap"></div>
+    <div class="sec">HOME de Referencia</div>
+    <div class="info">
+      Alinea físicamente el brazo en la pose que quieres usar como referencia y guárdala como <span class="ac">HOME</span>.
+      Sin encoder, este HOME es una <span class="hl">referencia de software</span>: si el brazo no está realmente en esa pose cuando mandas HOME,
+      la referencia quedará corrida.
+    </div>
+    <div id="home-wrap"></div>
+    <div class="br">
+      <button class="btn gh" id="btn-capture-home">Capturar pose actual</button>
+      <button class="btn f" id="btn-go-home-ref">Ir a HOME ref</button>
+    </div>
+    <button class="btn f" id="btn-reset-home" style="margin-top:2px">Restaurar HOME = 0°</button>
     <div class="sec">Operaciones</div>
     <div class="br">
       <button class="btn p f" id="btn-save-cal">Guardar</button>
@@ -302,7 +319,7 @@
       <label class="ard-toggle-label">
         <input type="checkbox" id="chk-autostart" checked class="ard-toggle-input">
         <div class="ard-toggle-track"><div class="ard-toggle-thumb"></div></div>
-        <span class="ard-toggle-text">Auto-inicio — envía HOME al detectar READY</span>
+        <span class="ard-toggle-text">Auto-inicio — envía HOME de referencia al detectar READY</span>
       </label>
       <div class="br">
         <button class="btn f" id="btn-home-ser"  disabled style="opacity:.4">↺ HOME</button>
@@ -319,9 +336,9 @@
 
       <!-- Velocidad máxima de servos -->
       <div class="jb">
-        <div class="jr"><span class="jn">Velocidad de servos</span><span class="jv" id="lv-spd">1.5 °/s</span></div>
-        <input type="range" id="sl-spd" min="0.5" max="15" value="1.5" step="0.5">
-        <div class="jlim"><span>0.5 °/s — ultra lento</span><span>15 °/s — máx</span></div>
+        <div class="jr"><span class="jn">Velocidad de servos</span><span class="jv" id="lv-spd">12 °/s</span></div>
+        <input type="range" id="sl-spd" min="10" max="18" value="12" step="1">
+        <div class="jlim"><span>10 °/s — mínimo estable</span><span>18 °/s — rápido</span></div>
       </div>
 
       <!-- ══════════════════════════════════════ SECCIÓN: MONITOR EN VIVO (colapsable) ══════════════════════════════════════ -->
@@ -335,31 +352,31 @@
           <div class="stg-head"><span>SERVO</span><span>CH</span><span>ÁNGULO</span><span>PWM</span><span>POSICIÓN</span></div>
           <div class="stg-row" id="stg-base">
             <span class="stg-nm">Base</span><span class="stg-ch">4</span>
-            <span class="stg-ang" id="stg-base-ang">90°</span>
+            <span class="stg-ang" id="stg-base-ang">0°</span>
             <span class="stg-pwm" id="stg-base-pwm">350</span>
             <div class="stg-bw"><div class="stg-bf" id="stg-base-bar" style="width:50%"></div><div class="stg-bc"></div></div>
           </div>
           <div class="stg-row" id="stg-sho">
             <span class="stg-nm">Hombro</span><span class="stg-ch">3</span>
-            <span class="stg-ang" id="stg-sho-ang">90°</span>
+            <span class="stg-ang" id="stg-sho-ang">0°</span>
             <span class="stg-pwm" id="stg-sho-pwm">350</span>
             <div class="stg-bw"><div class="stg-bf" id="stg-sho-bar" style="width:50%"></div></div>
           </div>
           <div class="stg-row" id="stg-elb">
             <span class="stg-nm">Codo</span><span class="stg-ch">2</span>
-            <span class="stg-ang" id="stg-elb-ang">20°</span>
+            <span class="stg-ang" id="stg-elb-ang">0°</span>
             <span class="stg-pwm" id="stg-elb-pwm">169</span>
             <div class="stg-bw"><div class="stg-bf" id="stg-elb-bar" style="width:15%"></div></div>
           </div>
           <div class="stg-row" id="stg-wri">
             <span class="stg-nm">Muñeca</span><span class="stg-ch">1</span>
-            <span class="stg-ang" id="stg-wri-ang">90°</span>
+            <span class="stg-ang" id="stg-wri-ang">0°</span>
             <span class="stg-pwm" id="stg-wri-pwm">350</span>
             <div class="stg-bw"><div class="stg-bf" id="stg-wri-bar" style="width:50%"></div><div class="stg-bc"></div></div>
           </div>
           <div class="stg-row" id="stg-grip">
             <span class="stg-nm">Pinza</span><span class="stg-ch">0</span>
-            <span class="stg-ang" id="stg-grip-ang">5°</span>
+            <span class="stg-ang" id="stg-grip-ang">0°</span>
             <span class="stg-pwm" id="stg-grip-pwm">139</span>
             <div class="stg-bw"><div class="stg-bf" id="stg-grip-bar" style="width:6%"></div></div>
           </div>
@@ -380,27 +397,27 @@
           <!-- Slider + botón de sweep por cada servo -->
           <div class="ard-servo-ctrl">
             <span class="ard-sc-lbl">Base (CH4)</span>
-            <input type="range" id="ard-sl-base" class="ard-sl" min="-90" max="0" value="0" step="1">
+            <input type="range" id="ard-sl-base" class="ard-sl" min="-90" max="90" value="0" step="1">
             <button class="btn" id="ard-sweep-base" title="Barrido completo">↔</button>
           </div>
           <div class="ard-servo-ctrl">
             <span class="ard-sc-lbl">Hombro (CH3)</span>
-            <input type="range" id="ard-sl-sho" class="ard-sl" min="0" max="90" value="90" step="1">
+            <input type="range" id="ard-sl-sho" class="ard-sl" min="-45" max="45" value="0" step="1">
             <button class="btn" id="ard-sweep-sho" title="Barrido completo">↔</button>
           </div>
           <div class="ard-servo-ctrl">
             <span class="ard-sc-lbl">Codo (CH2)</span>
-            <input type="range" id="ard-sl-elb" class="ard-sl" min="0" max="80" value="80" step="1">
+            <input type="range" id="ard-sl-elb" class="ard-sl" min="-30" max="30" value="0" step="1">
             <button class="btn" id="ard-sweep-elb" title="Barrido completo">↔</button>
           </div>
           <div class="ard-servo-ctrl">
             <span class="ard-sc-lbl">Muñeca (CH1)</span>
-            <input type="range" id="ard-sl-wri" class="ard-sl" min="-90" max="100" value="0" step="1">
+            <input type="range" id="ard-sl-wri" class="ard-sl" min="-90" max="90" value="0" step="1">
             <button class="btn" id="ard-sweep-wri" title="Barrido completo">↔</button>
           </div>
           <div class="ard-servo-ctrl">
             <span class="ard-sc-lbl">Pinza (CH0)</span>
-            <input type="range" id="ard-sl-grip" class="ard-sl" min="0" max="20" value="20" step="1">
+            <input type="range" id="ard-sl-grip" class="ard-sl" min="-30" max="30" value="0" step="1">
             <button class="btn" id="ard-sweep-grip" title="Barrido completo">↔</button>
           </div>
         </div>
@@ -463,11 +480,11 @@
           <div class="wt">
             <div class="wt-hdr"><span class="wt-from wt-from-pca">PCA9685</span><span class="wt-ar">──── PWM ────▶</span><span class="wt-to wt-to-mg">5× MG995</span></div>
             <div class="wt-ch-h"><span>CH</span><span>SERVO</span><span>FUNCIÓN</span><span>RANGO</span></div>
-            <div class="wt-ch"><span class="wt-ch-n">CH 0</span><span class="wt-ch-s">Pinza</span><span class="wt-ch-f">Apertura de garra</span><span class="wt-ch-r">0°–90°</span></div>
-            <div class="wt-ch"><span class="wt-ch-n">CH 1</span><span class="wt-ch-s">Muñeca</span><span class="wt-ch-f">Rotación axial</span><span class="wt-ch-r">0°–180°</span></div>
-            <div class="wt-ch"><span class="wt-ch-n">CH 2</span><span class="wt-ch-s">Codo</span><span class="wt-ch-f">Flexión</span><span class="wt-ch-r">0°–135°</span></div>
-            <div class="wt-ch"><span class="wt-ch-n">CH 3</span><span class="wt-ch-s">Hombro</span><span class="wt-ch-f">Elevación del brazo</span><span class="wt-ch-r">0°–180°</span></div>
-            <div class="wt-ch"><span class="wt-ch-n">CH 4</span><span class="wt-ch-s">Base</span><span class="wt-ch-f">Rotación horizontal</span><span class="wt-ch-r">0°–180°</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 0</span><span class="wt-ch-s">Pinza</span><span class="wt-ch-f">Apertura de garra</span><span class="wt-ch-r">60° totales</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 1</span><span class="wt-ch-s">Muñeca</span><span class="wt-ch-f">Rotación axial</span><span class="wt-ch-r">180° totales</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 2</span><span class="wt-ch-s">Codo</span><span class="wt-ch-f">Flexión</span><span class="wt-ch-r">60° totales</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 3</span><span class="wt-ch-s">Hombro</span><span class="wt-ch-f">Elevación del brazo</span><span class="wt-ch-r">90° totales</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 4</span><span class="wt-ch-s">Base</span><span class="wt-ch-f">Rotación horizontal</span><span class="wt-ch-r">180° totales</span></div>
             <div class="wt-cable">
               <span class="wt-cable-t">Cables MG995:</span>
               <span><span class="wt-dot" style="background:#E06030"></span>Naranja → Señal (S)</span>
@@ -537,7 +554,7 @@
                   <option value="4" selected>Canal 4</option>
                 </select>
               </div>
-              <div class="chan-range">0°–180°</div>
+              <div class="chan-range">180° totales</div>
             </div>
 
             <!-- Fila: Hombro -->
@@ -556,7 +573,7 @@
                   <option value="4">Canal 4</option>
                 </select>
               </div>
-              <div class="chan-range">0°–180°</div>
+              <div class="chan-range">90° totales</div>
             </div>
 
             <!-- Fila: Codo -->
@@ -575,7 +592,7 @@
                   <option value="4">Canal 4</option>
                 </select>
               </div>
-              <div class="chan-range">0°–135°</div>
+              <div class="chan-range">60° totales</div>
             </div>
 
             <!-- Fila: Muñeca -->
@@ -594,7 +611,7 @@
                   <option value="4">Canal 4</option>
                 </select>
               </div>
-              <div class="chan-range">0°–180°</div>
+              <div class="chan-range">180° totales</div>
             </div>
 
             <!-- Fila: Pinza -->
@@ -613,7 +630,7 @@
                   <option value="4">Canal 4</option>
                 </select>
               </div>
-              <div class="chan-range">0°–90°</div>
+              <div class="chan-range">60° totales</div>
             </div>
 
           </div><!-- /chan-table -->
@@ -665,7 +682,7 @@
   <span class="ft">RoboArm IPN v10</span>
   <span class="ft d" id="ft-mode">Modo: Manual</span>
   <span class="ft d" id="ft-ser">Serial: —</span>
-  <span id="ft-ang">B:0° H:90° C:20° W:0° G:5°</span>
+  <span id="ft-ang">B:0° H:0° C:0° W:0° G:0°</span>
 </footer>
 </div><!-- /app -->
 
@@ -692,6 +709,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 <!-- Módulos de la aplicación -->
 <script src="shared.js"></script>
 <script src="arm3d.js"></script>

@@ -17,20 +17,17 @@
    • def    → posición HOME (posición segura de inicio)
    • lbl    → etiqueta para la UI de calibración
    ────────────────────────────────────────────────────────────── */
-// Regla de 3 — velocidad real = 720 °/s
-//   (antes calculaba 360°/s pero movía el doble → dps real es 720)
-// maxSecs = angLim / dps  (tope físico por comando)
-//   base   90° / 720 °/s = 0.125 s
-//   hombro 90° / 720 °/s = 0.125 s
-//   codo   80° / 720 °/s = 0.111 s
-//   muñeca 100°/ 720 °/s = 0.139 s
-//   pinza  20° / 720 °/s = 0.028 s
+const ANGLE_STEP_DEG  = 1;
+const MANUAL_STEP_DEG = 10;
+const DEFAULT_SPEED_DPS = 8;
+const MIN_SPEED_DPS     = 10;
+const MAX_SPEED_DPS     = 18;
 const JDEFS = [
-  { key:'base', min:-10, max:10, def:0, lbl:'BASE',   dps: 720, angLim:  90, maxSecs: 0.125 },
-  { key:'sho',  min:-10, max:10, def:0, lbl:'HOMBRO', dps: 720, angLim:  90, maxSecs: 0.125 },
-  { key:'elb',  min:-10, max:10, def:0, lbl:'CODO',   dps: 720, angLim:  80, maxSecs: 0.111 },
-  { key:'wri',  min:-10, max:10, def:0, lbl:'MUÑECA', dps: 720, angLim: 100, maxSecs: 0.139 },
-  { key:'grip', min:-10, max:10, def:0, lbl:'PINZA',  dps: 720, angLim:  20, maxSecs: 0.028 },
+  { key:'base', min:-90, max: 90, def:0, lbl:'BASE',   dps: DEFAULT_SPEED_DPS, angLim: 90, maxSecs: 0.18 },
+  { key:'sho',  min:-45, max: 45, def:0, lbl:'HOMBRO', dps: DEFAULT_SPEED_DPS, angLim: 45, maxSecs: 0.18 },
+  { key:'elb',  min:-30, max: 30, def:0, lbl:'CODO',   dps: DEFAULT_SPEED_DPS, angLim: 30, maxSecs: 0.18 },
+  { key:'wri',  min:-90, max: 90, def:0, lbl:'MUÑECA', dps: DEFAULT_SPEED_DPS, angLim: 90, maxSecs: 0.18 },
+  { key:'grip', min:-30, max: 30, def:0, lbl:'PINZA',  dps: DEFAULT_SPEED_DPS, angLim: 30, maxSecs: 0.18 },
 ];
 
 /* ──────────────────────────────────────────────────────────────
@@ -41,120 +38,195 @@ const JDEFS = [
 const J = {};
 JDEFS.forEach(d => {
   J[d.key] = {
-    v:       d.def,    // Comando actual en SEGUNDOS (velocidad continua) — interno
-    target:  0,        // Ángulo objetivo en GRADOS (lo que mueve el usuario/visión)
-    calMin:  d.min,    // Mínimo de calibración (protege al servo)
-    calMax:  d.max,    // Máximo de calibración (protege al servo)
-    dps:     d.dps,    // Grados/segundo reales del servo (calibrable)
-    angPos:  0,        // Estimación de posición acumulada en GRADOS (desde HOME)
-    angLim:  d.angLim, // Límite ± de grados permitidos desde HOME
-    maxSecs: d.maxSecs,// Segundos máximos por comando (=angLim/dps, protege overshoot)
+    v:        0,        // Pulso actual en SEGUNDOS (dura 1 ciclo de commit)
+    target:   0,        // Ángulo objetivo en GRADOS (lo que mueve UI/visión)
+    committed:0,        // Posición "enviada" acumulada en GRADOS (= angPos para display)
+    home:     d.def,    // HOME de referencia (software) persistible
+    calMin:   d.min,
+    calMax:   d.max,
+    dpsBase:  d.dps,
+    dps:      d.dps,
+    angPos:   0,
+    angLim:   d.angLim,
+    maxSecs:  d.maxSecs,
   };
 });
 
 /* ──────────────────────────────────────────────────────────────
    PERSISTENCIA DE VELOCIDADES (grados/segundo) calibradas
    ────────────────────────────────────────────────────────────── */
-// v2: migración forzada a 90 °/s como valor medido del hardware real.
-// Cualquier calibración previa en v1 se ignora para aplicar el nuevo default.
-const DPS_KEY = 'roboarm-dps-v2';
+// v3: velocidad lenta por defecto para correcciones manuales cortas y más controlables.
+const DPS_KEY = 'roboarm-dps-v3';
+let speedDps = DEFAULT_SPEED_DPS;
 try {
   localStorage.removeItem('roboarm-dps-v1');   // limpiar clave vieja
+  localStorage.removeItem('roboarm-dps-v2');
   const saved = JSON.parse(localStorage.getItem(DPS_KEY) || 'null');
   if (saved) JDEFS.forEach(d => {
     if (typeof saved[d.key] === 'number' && saved[d.key] > 0)
-      J[d.key].dps = saved[d.key];
+      J[d.key].dpsBase = saved[d.key];
   });
 } catch (e) { /* usar defaults */ }
 
+function applySpeedProfile(nextDps = speedDps) {
+  speedDps = Math.max(MIN_SPEED_DPS, Math.min(MAX_SPEED_DPS, nextDps));
+  const scale = speedDps / DEFAULT_SPEED_DPS;
+  JDEFS.forEach(d => {
+    J[d.key].dps = Math.max(1, J[d.key].dpsBase * scale);
+  });
+  return speedDps;
+}
+applySpeedProfile(speedDps);
+
 function saveDps() {
   const data = {};
-  JDEFS.forEach(d => { data[d.key] = J[d.key].dps; });
+  JDEFS.forEach(d => { data[d.key] = J[d.key].dpsBase; });
   try { localStorage.setItem(DPS_KEY, JSON.stringify(data)); } catch(e) {}
 }
 
 /* ──────────────────────────────────────────────────────────────
-   SEGUIMIENTO DE POSICIÓN ANGULAR ESTIMADA
-   Cada comando en J.v representa una DURACIÓN (no una velocidad
-   continua). El firmware lo ejecuta como countdown: corre ese
-   tiempo y se detiene. En JS replicamos esa conducta vía
-   _runBudget por articulación — se rellena con |v| al emitir un
-   comando y se consume en cada tick de rAF.
+   MODELO DE PULSOS DISCRETOS (commit cycle)
+   ────────────────────────────────────────────────────────────────
+   Problema anterior: el controlador rAF refrescaba j.v cada 16 ms,
+   y sendPos lo enviaba cada ~80 ms. El firmware reseteaba sv[i].t
+   con CADA pulso recibido, así que un servo que debía moverse 10°
+   nunca se paraba — siempre había un nuevo pulso reiniciando el
+   temporizador antes de que el anterior terminase. Resultado:
+   "1 vuelta completa" en vez de los grados solicitados.
+
+   Solución: emitir UN pulso discreto cada COMMIT_MS, ligeramente
+   mayor que maxSecs (139 ms de la muñeca). Así el firmware tiene
+   tiempo de terminar el pulso antes de recibir el siguiente.
+   Se tiene:
+     • j.target    → grados deseados (UI/visión lo mueven)
+     • j.committed → grados ya "enviados" al firmware (acumulador)
+     • j.v         → segundos del pulso actual (0 entre ciclos)
    ────────────────────────────────────────────────────────────── */
-JDEFS.forEach(d => { J[d.key]._runBudget = 0; J[d.key]._runDir = 0; });
+const _POS_TOL    = 0.35;
+const COMMIT_MS   = 200;
+const PULSE_CAP_S = 0.18;
+const MANUAL_SETTLE_MS = COMMIT_MS + 40;
 
-function _startCmdBudget(key, v) {
-  const j = J[key];
-  j._runBudget = Math.abs(v);
-  j._runDir    = Math.sign(v);
+const _manualQueue   = {};
+const _manualBusy    = {};
+const _manualToken   = {};
+const _manualPlanned = {};
+
+JDEFS.forEach(d => {
+  _manualQueue[d.key]   = [];
+  _manualBusy[d.key]    = false;
+  _manualToken[d.key]   = 0;
+  _manualPlanned[d.key] = d.def;
+});
+
+const _sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function jointMin(key) {
+  return Math.max(-J[key].angLim, J[key].calMin);
 }
 
-let _angT = performance.now();
-function _tickAngPos() {
-  const now = performance.now();
-  const dt  = Math.min((now - _angT) / 1000, 0.2);
-  _angT = now;
+function jointMax(key) {
+  return Math.min(J[key].angLim, J[key].calMax);
+}
+
+function clampJointDeg(key, deg) {
+  if (!J[key]) return deg;
+  return clamp(deg, jointMin(key), jointMax(key));
+}
+
+function getJointHome(key) {
+  if (!J[key]) return 0;
+  return clampJointDeg(key, typeof J[key].home === 'number' ? J[key].home : 0);
+}
+
+function setJointHome(key, deg) {
+  if (!J[key]) return 0;
+  J[key].home = snapTargetDeg(key, deg);
+  return getJointHome(key);
+}
+
+function getHomePoseMap() {
+  const map = {};
+  JDEFS.forEach(d => { map[d.key] = getJointHome(d.key); });
+  return map;
+}
+
+function captureCurrentPoseAsHome() {
+  const map = {};
   JDEFS.forEach(d => {
-    const j = J[d.key];
-    if (j._runBudget > 0 && j._runDir !== 0) {
-      const step = Math.min(dt, j._runBudget);
-      const deg  = j._runDir * j.dps * step;
-      j.angPos   = clamp(j.angPos + deg, -j.angLim, j.angLim);
-      j._runBudget -= step;
-      if (j._runBudget <= 0.0005) { j._runBudget = 0; j._runDir = 0; }
-    }
+    map[d.key] = setJointHome(d.key, J[d.key].angPos);
   });
-  requestAnimationFrame(_tickAngPos);
+  return map;
 }
-requestAnimationFrame(_tickAngPos);
+
+function moveToHomePose() {
+  JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
+}
+
+function snapDeltaDeg(deg, stepDeg = ANGLE_STEP_DEG) {
+  if (!isFinite(deg) || !deg) return 0;
+  const step = Math.max(0.001, Math.abs(stepDeg));
+  const snapped = Math.round(deg / step) * step;
+  return snapped || Math.sign(deg) * step;
+}
+
+function snapTargetDeg(key, deg, stepDeg = ANGLE_STEP_DEG) {
+  if (!J[key]) return deg;
+  const clamped = clampJointDeg(key, deg);
+  if (Math.abs(clamped) < 1e-9 || clamped === jointMin(key) || clamped === jointMax(key))
+    return clamped;
+  const step = Math.max(0.001, Math.abs(stepDeg));
+  return clampJointDeg(key, Math.round(clamped / step) * step);
+}
+
+function _commitAll() {
+  let anyChanged = false;
+  JDEFS.forEach(d => {
+    const j    = J[d.key];
+    const tgt  = clampJointDeg(d.key, j.target);
+    const diff = tgt - j.committed;
+
+    if (Math.abs(diff) < _POS_TOL) {
+      if (j.v !== 0) { j.v = 0; anyChanged = true; }
+      return;
+    }
+
+    const dps = Math.max(1, j.dps);
+    const maxP = Math.min(j.maxSecs, PULSE_CAP_S);
+    const sec = clamp(diff / dps, -maxP, maxP);
+    // Avanzar committed por el ángulo que el pulso realmente producirá
+    j.committed = clampJointDeg(d.key, j.committed + sec * dps);
+    j.angPos    = j.committed;
+    j.v         = sec;
+    anyChanged  = true;
+  });
+  if (anyChanged && !_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      if (typeof applyArm === 'function') applyArm();
+      refreshUI();
+    });
+  }
+}
+setInterval(_commitAll, COMMIT_MS);
 
 /** Resetea la estimación angular (útil al enviar HOME). */
 function resetAngPos() {
+  cancelAllQueuedMoves({ holdPosition: false });
   JDEFS.forEach(d => {
-    J[d.key].angPos     = 0;
-    J[d.key].target     = 0;
-    J[d.key]._runBudget = 0;
-    J[d.key]._runDir    = 0;
-    J[d.key].v          = 0;
+    const home = getJointHome(d.key);
+    J[d.key].angPos    = home;
+    J[d.key].target    = home;
+    J[d.key].committed = home;
+    J[d.key].v         = 0;
+    _manualPlanned[d.key] = home;
   });
 }
 
-/* ──────────────────────────────────────────────────────────────
-   CONTROLADOR POSICIÓN → VELOCIDAD
-   La UI mueve J[key].target (grados). Este controlador calcula
-   la orden en segundos necesaria para acercar angPos → target,
-   respetando maxSecs y angLim. Corre a rAF y refresca el budget
-   cada frame para mantener al servo en movimiento.
-   ────────────────────────────────────────────────────────────── */
-const _POS_TOL    = 1.5;   // grados: banda muerta para considerar "llegado"
-const _MIN_CMD_S  = 0.002; // segundos: comando mínimo ejecutable por firmware
-
-function _tickPosCtrl() {
-  JDEFS.forEach(d => {
-    const j    = J[d.key];
-    const tgt  = clamp(j.target, -j.angLim, j.angLim);
-    const diff = tgt - j.angPos;
-    if (Math.abs(diff) < _POS_TOL) {
-      if (j.v !== 0) { j.v = 0; j._runBudget = 0; j._runDir = 0; }
-      return;
-    }
-    const dps = Math.max(1, j.dps);
-    const sec = diff / dps;
-    let cmd   = clamp(sec, -j.maxSecs, j.maxSecs);
-    // Garantizar que el firmware no ignore el comando (umbral 0.001 s)
-    if (Math.abs(cmd) < _MIN_CMD_S) cmd = Math.sign(cmd || 1) * _MIN_CMD_S;
-    j.v = cmd;
-    j._runBudget = Math.abs(cmd);
-    j._runDir    = Math.sign(cmd);
-  });
-  requestAnimationFrame(_tickPosCtrl);
-}
-requestAnimationFrame(_tickPosCtrl);
-
-/** Fija el objetivo angular (grados) de un servo. */
-function setJointTarget(key, deg) {
+function _setJointTargetRaw(key, deg) {
   if (!J[key]) return;
-  J[key].target = clamp(deg, -J[key].angLim, J[key].angLim);
+  J[key].target = snapTargetDeg(key, deg);
   if (!_rafPending) {
     _rafPending = true;
     requestAnimationFrame(() => {
@@ -165,42 +237,123 @@ function setJointTarget(key, deg) {
   }
 }
 
-/** Variante en lote para múltiples servos simultáneos (visión). */
+function cancelQueuedMoves(key, opts = {}) {
+  if (!J[key]) return;
+  const holdPosition = opts.holdPosition !== false;
+  _manualQueue[key].length = 0;
+  _manualBusy[key] = false;
+  _manualToken[key]++;
+  _manualPlanned[key] = clampJointDeg(key, holdPosition ? J[key].angPos : J[key].target);
+  if (holdPosition) _setJointTargetRaw(key, J[key].angPos);
+}
+
+function cancelAllQueuedMoves(opts = {}) {
+  JDEFS.forEach(d => cancelQueuedMoves(d.key, opts));
+}
+
+/** Fija el objetivo angular (grados) de un servo.
+ *  El commit cycle se encarga de emitir los pulsos; aquí solo
+ *  actualizamos target y refrescamos UI. */
+function setJointTarget(key, deg) {
+  if (!J[key]) return;
+  cancelQueuedMoves(key, { holdPosition: false });
+  _setJointTargetRaw(key, deg);
+}
+
+async function _runManualQueue(key, token) {
+  while (_manualToken[key] === token && _manualQueue[key].length) {
+    const goal = _manualQueue[key].shift();
+    _manualPlanned[key] = goal;
+    _setJointTargetRaw(key, goal);
+
+    const deadline = performance.now() + 15000;
+    while (_manualToken[key] === token) {
+      const atGoal  = Math.abs(J[key].angPos - goal) <= _POS_TOL;
+      const stopped = Math.abs(J[key].v) < 0.0005;
+      if (atGoal && stopped) break;
+      if (performance.now() > deadline) break;
+      await _sleep(30);
+    }
+
+    if (_manualToken[key] !== token) break;
+    await _sleep(MANUAL_SETTLE_MS);
+  }
+}
+
+function _ensureManualQueueRunning(key) {
+  if (_manualBusy[key]) return;
+  _manualBusy[key] = true;
+  const token = _manualToken[key];
+  _runManualQueue(key, token)
+    .catch(() => {})
+    .finally(() => {
+      if (_manualToken[key] !== token) return;
+      _manualBusy[key] = false;
+      _manualPlanned[key] = J[key].target;
+      if (_manualQueue[key].length) _ensureManualQueueRunning(key);
+    });
+}
+
+function _queueManualTargets(key, fromDeg, toDeg) {
+  const step = Math.max(0.001, MANUAL_STEP_DEG);
+  let cursor = fromDeg;
+
+  while (true) {
+    const remaining = toDeg - cursor;
+    if (Math.abs(remaining) < 1e-9) break;
+
+    const rawNext = Math.abs(remaining) <= step
+      ? toDeg
+      : cursor + Math.sign(remaining) * step;
+    const next = snapTargetDeg(key, rawNext, MANUAL_STEP_DEG);
+
+    if (Math.abs(next - cursor) < 1e-9) break;
+
+    _manualQueue[key].push(next);
+    cursor = next;
+  }
+
+  _manualPlanned[key] = cursor;
+  return Math.abs(cursor - fromDeg) > 1e-9;
+}
+
+function queueManualMove(key, degrees) {
+  if (!J[key] || !Math.abs(degrees)) return false;
+
+  const delta = snapDeltaDeg(degrees, MANUAL_STEP_DEG);
+  const hasPendingManual = _manualBusy[key] || _manualQueue[key].length;
+  const base = hasPendingManual ? _manualPlanned[key] : J[key].angPos;
+
+  if (!hasPendingManual && Math.abs(J[key].target - J[key].angPos) > _POS_TOL) {
+    _setJointTargetRaw(key, J[key].angPos);
+  }
+
+  const nextTarget = snapTargetDeg(key, base + delta, MANUAL_STEP_DEG);
+  if (!_queueManualTargets(key, base, nextTarget)) return false;
+
+  _ensureManualQueueRunning(key);
+  return true;
+}
+
+/** Variante en lote para múltiples servos simultáneos (visión).
+ *  BASE se ignora aquí: en modo visión la base no se mueve bajo ninguna vía. */
 function batchTargets(map) {
   for (const key in map) {
     if (!J[key]) continue;
-    J[key].target = clamp(map[key], -J[key].angLim, J[key].angLim);
-  }
-  if (!_rafPending) {
-    _rafPending = true;
-    requestAnimationFrame(() => {
-      _rafPending = false;
-      if (typeof applyArm === 'function') applyArm();
-      refreshUI();
-    });
+    if (key === 'base' && window.__camOn) continue;
+    setJointTarget(key, map[key]);
   }
 }
 
 /* ──────────────────────────────────────────────────────────────
-   MOVIMIENTO EN GRADOS — convierte "mover N grados" a pulsos
-   de segundos basados en dps calibrado. Gestiona la cola
-   automáticamente con el temporizador del firmware.
+   MOVIMIENTO EN GRADOS — "muévete N grados desde donde estás".
+   Ahora se traduce a una actualización de target: el commit cycle
+   emitirá los pulsos necesarios para llegar.
    ────────────────────────────────────────────────────────────── */
 function moveDegrees(key, degrees) {
   if (!J[key] || !Math.abs(degrees)) return;
-  const j   = J[key];
-  const dps = Math.max(1, j.dps);
-  // Clamp el ángulo destino contra angLim (no pasarse del tope mecánico)
-  const target = clamp(j.angPos + degrees, -j.angLim, j.angLim);
-  const realDeg = target - j.angPos;
-  if (Math.abs(realDeg) < 0.5) return;       // ya estaba en el tope
-  const secs = realDeg / dps;
-  // Limitar a maxSecs del joint (nunca permitir un comando que se pase del angLim)
-  const cmd = clamp(secs, -j.maxSecs, j.maxSecs);
-  setJoint(key, cmd);
-  const ms = Math.abs(secs) * 1000;
-  clearTimeout(j._degTimer);
-  j._degTimer = setTimeout(() => setJoint(key, 0), ms);
+  const j = J[key];
+  setJointTarget(key, j.target + snapDeltaDeg(degrees));
 }
 
 
@@ -226,66 +379,24 @@ const lerp  = (a, b, t) => a + (b - a) * t;
    cambios y ejecuta una sola actualización vía requestAnimationFrame.
 
    Uso en vision.js:
-     batchJoints({ base: 30, sho: 90, elb: 45, wri: 0, grip: 20 });
+     batchJoints({ base: 30, sho: 30, elb: 15, wri: 0, grip: 20 });
    ────────────────────────────────────────────────────────────── */
 let _rafPending = false;  // Bandera: ¿hay una actualización pendiente?
 
-/** Clampa una orden de velocidad (segundos):
- *  - calMin/calMax (rango del slider)
- *  - ±maxSecs (tope por comando)
- *  - Bloqueo solo si angPos YA está al tope en la dirección pedida.
- *    (Sin proyección forward — ésta mataba comandos pequeños cuando
- *    la estimación era inexacta.)
- */
-function _safeClamp(key, v) {
-  const j = J[key];
-  let c = clamp(v, j.calMin, j.calMax);
-  c = clamp(c, -j.maxSecs, j.maxSecs);
-  if (c > 0 && j.angPos >=  j.angLim) return 0;
-  if (c < 0 && j.angPos <= -j.angLim) return 0;
-  return c;
+/* ──────────────────────────────────────────────────────────────
+   COMPATIBILIDAD — el proyecto ya opera en GRADOS objetivo.
+   setJoint / batchJoints se mantienen como alias legibles para
+   módulos viejos (presets, sweep, calibración).
+   ────────────────────────────────────────────────────────────── */
+function setJoint(key, val) {
+  if (!J[key]) return;
+  setJointTarget(key, val);
 }
 
 function batchJoints(targets) {
-  let changed = false;
   for (const key in targets) {
     if (!(key in J)) continue;
-    const clamped = _safeClamp(key, targets[key]);
-    if (Math.abs(clamped - J[key].v) > 0.001) {
-      J[key].v = clamped;
-      _startCmdBudget(key, clamped);
-      changed = true;
-    }
-  }
-  // Programar actualización visual solo si algo cambió y no hay una en cola
-  if (changed && !_rafPending) {
-    _rafPending = true;
-    requestAnimationFrame(() => {
-      _rafPending = false;
-      if (typeof applyArm === 'function') applyArm();  // Rotar grupos 3D
-      refreshUI();                                       // Actualizar sliders y HUD
-    });
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────
-   SET JOINT — Actualización de articulación individual
-   Mantiene compatibilidad con código que no usa batchJoints.
-   También usa rAF para evitar múltiples actualizaciones por frame.
-   ────────────────────────────────────────────────────────────── */
-function setJoint(key, val) {
-  const clamped = _safeClamp(key, val);
-  if (Math.abs(clamped - J[key].v) > 0.001) {
-    J[key].v = clamped;
-    _startCmdBudget(key, clamped);
-    if (!_rafPending) {
-      _rafPending = true;
-      requestAnimationFrame(() => {
-        _rafPending = false;
-        if (typeof applyArm === 'function') applyArm();
-        refreshUI();
-      });
-    }
+    setJointTarget(key, targets[key]);
   }
 }
 

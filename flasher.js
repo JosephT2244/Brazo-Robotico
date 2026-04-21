@@ -67,7 +67,17 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
   const pages = Math.ceil(bin.length / pageSize);
 
   /* ── Abrir puerto a 115200 (Optiboot) ─────────────────────── */
-  await serialPort.open({ baudRate: 115200 });
+  try {
+    await serialPort.open({ baudRate: 115200 });
+  } catch (e) {
+    if (/already open|InvalidStateError/i.test(e.message || '')) {
+      try { await serialPort.close(); } catch {}
+      await new Promise(r => setTimeout(r, 250));
+      await serialPort.open({ baudRate: 115200 });
+    } else {
+      throw e;
+    }
+  }
 
   /* ── Buffer de lectura asíncrono ───────────────────────────── */
   const rxQ    = [];   // bytes recibidos sin consumir
@@ -75,7 +85,7 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
   let loopActive = true;
 
   const rdReader = serialPort.readable.getReader();
-  (async () => {
+  const readerLoop = (async () => {
     try {
       while (loopActive) {
         const { value, done } = await rdReader.read();
@@ -86,7 +96,7 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
         }
       }
     } catch { /* puerto cerrado */ }
-    rdReader.releaseLock();
+    try { rdReader.releaseLock(); } catch {}
   })();
 
   const writer = serialPort.writable.getWriter();
@@ -95,37 +105,51 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
   /* Lee un byte con timeout en ms */
   const rxByte = (ms = 800) => new Promise((res, rej) => {
     if (rxQ.length) { res(rxQ.shift()); return; }
+    let waiter = null;
     const t = setTimeout(() => {
-      const i = rxWait.indexOf(res);
+      const i = rxWait.indexOf(waiter);
       if (i >= 0) rxWait.splice(i, 1);
       rej(new Error('Timeout bootloader'));
     }, ms);
-    rxWait.push(b => { clearTimeout(t); res(b); });
+    waiter = b => { clearTimeout(t); res(b); };
+    rxWait.push(waiter);
   });
 
   /* Espera STK_INSYNC + STK_OK del bootloader */
-  const expect = async (ms = 800) => {
+  const expect = async (ms = 800, allowNoise = false) => {
     const b0 = await rxByte(ms);
     const b1 = await rxByte(ms);
+    if (allowNoise) {
+      const deadline = performance.now() + ms;
+      let a = b0, b = b1;
+      while ((a !== _S.INSYNC || b !== _S.OK) && performance.now() < deadline) {
+        a = b;
+        b = await rxByte(Math.max(20, deadline - performance.now()));
+      }
+      if (a === _S.INSYNC && b === _S.OK) return;
+      throw new Error(`STK error: 0x${a.toString(16)} 0x${b.toString(16)}`);
+    }
     if (b0 !== _S.INSYNC || b1 !== _S.OK)
       throw new Error(`STK error: 0x${b0.toString(16)} 0x${b1.toString(16)}`);
   };
 
   try {
     /* 1. Reset por DTR → Arduino entra en bootloader por ~500 ms */
-    await serialPort.setSignals({ dataTerminalReady: false });
-    await new Promise(r => setTimeout(r, 50));
-    await serialPort.setSignals({ dataTerminalReady: true });
-    await new Promise(r => setTimeout(r, 180)); // Optiboot arranca en ~150 ms
-
-    /* 2. Sincronizar con el bootloader */
     let synced = false;
-    for (let i = 0; i < 10 && !synced; i++) {
-      rxQ.length = 0; // Limpiar buffer de basura (eco de READY, etc.)
-      while (rxWait.length) rxWait.shift()(0xFF); // Cancelar esperas anteriores
-      await tx([_S.GET_SYNC, _S.CRC_EOP]);
-      try { await expect(200); synced = true; }
-      catch { await new Promise(r => setTimeout(r, 40)); }
+    for (const settleMs of [70, 140, 220]) {
+      if (synced) break;
+      await serialPort.setSignals({ dataTerminalReady: false });
+      await new Promise(r => setTimeout(r, 50));
+      await serialPort.setSignals({ dataTerminalReady: true });
+      await new Promise(r => setTimeout(r, settleMs));
+
+      /* 2. Sincronizar con el bootloader */
+      for (let i = 0; i < 12 && !synced; i++) {
+        rxQ.length = 0; // Limpiar basura previa (READY, eco del sketch, etc.)
+        await tx([_S.GET_SYNC, _S.CRC_EOP]);
+        try { await expect(250, true); synced = true; }
+        catch { await new Promise(r => setTimeout(r, 35)); }
+      }
     }
     if (!synced)
       throw new Error(
@@ -155,7 +179,10 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
 
   } finally {
     loopActive = false;
+    while (rxWait.length) rxWait.shift()(0xFF);
+    try { await rdReader.cancel(); } catch { }
     try { writer.releaseLock(); }   catch { }
+    try { await readerLoop; } catch { }
     try { await serialPort.close(); } catch { }
   }
 }

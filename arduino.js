@@ -39,11 +39,11 @@ try {
 
 /* ── Meta-info de cada servo (para firmware y telemetría) ───── */
 const SERVO_META = {
-  base: { label:'Base',   varName:'CH_BASE',     min:0, max:90,  offset:+90, centered:true,  range:'0°–90°'   },
-  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:0,  max:90,  offset:0,   centered:false, range:'0°–90°'   },
-  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:0, max:80,  offset:0,   centered:false, range:'0°–80°'   },
-  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:0, max:190, offset:+90, centered:true,  range:'0°–190°'  },
-  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:0, max:20,  offset:0,   centered:false, range:'0°–20°'   },
+  base: { label:'Base',   varName:'CH_BASE',     min:-90, max:90, offset:0, centered:true,  range:'180° totales' },
+  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:-45, max:45, offset:0, centered:true,  range:'90° totales'  },
+  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:-30, max:30, offset:0, centered:true,  range:'60° totales'  },
+  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:-90, max:90, offset:0, centered:true,  range:'180° totales' },
+  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:-30, max:30, offset:0, centered:true,  range:'60° totales'  },
 };
 
 /* ══════════════════════════════════════════════
@@ -58,7 +58,7 @@ const SERVO_META = {
 // base 312, hombro 314, codo 325, muñeca 332 (ajustar si deriva), pinza 312
 const NEUTRAL_KEY     = 'roboarm-neutrals-v3';
 const NEUTRAL_DEFAULT = 322;   // centro de la zona muerta medida (~321–325)
-let neutrals = { base:312, sho:314, elb:325, wri:332, grip:313 };
+let neutrals = { base:313, sho:314, elb:325, wri:328, grip:313 };
 try {
   localStorage.removeItem('roboarm-neutrals-v1');
   localStorage.removeItem('roboarm-neutrals-v2');  // limpiar versiones viejas
@@ -77,7 +77,7 @@ function saveNeutrals() {
 function sendNeutrals() {
   if (!writer) return;
   const cmd = `NEU:${neutrals.base},${neutrals.sho},${neutrals.elb},${neutrals.wri},${neutrals.grip}`;
-  sendRaw(cmd);
+  return sendRaw(cmd);
 }
 
 /* Refresco periódico de neutrales cada 4 s — si el firmware perdió el
@@ -92,6 +92,28 @@ function startNeuRefresh() {
 function stopNeuRefresh() {
   clearInterval(_neuRefreshTimer);
   _neuRefreshTimer = null;
+}
+
+const PULSE_HARD_MIN = 130;
+const PULSE_HARD_MAX = 490;
+
+function speedDpsToPulseDelta(dps) {
+  const t = (clamp(dps, MIN_SPEED_DPS, MAX_SPEED_DPS) - MIN_SPEED_DPS) / (MAX_SPEED_DPS - MIN_SPEED_DPS || 1);
+  return Math.round(12 + t * 26);
+}
+
+function velPWM(secs, key) {
+  if (Math.abs(secs) < 0.0005) return (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
+  const delta = speedDpsToPulseDelta(speedDps);
+  const neutral = (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
+  return secs > 0
+    ? clamp(neutral + delta, PULSE_HARD_MIN, PULSE_HARD_MAX)
+    : clamp(neutral - delta, PULSE_HARD_MIN, PULSE_HARD_MAX);
+}
+
+function sendSpeedProfile() {
+  if (!writer) return;
+  return sendRaw(`SPD:${speedDps.toFixed(1)}`);
 }
 
 /* ══════════════════════════════════════════════
@@ -136,9 +158,12 @@ ${chanComment}
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
 // Parámetros PWM para MG995 @ 50 Hz
-#define SERVO_FREQ  50      // Hz
-#define PULSE_MIN   130     // ~635 µs → velocidad máxima un sentido
-#define PULSE_MAX   490     // ~2393 µs → velocidad máxima otro sentido
+#define SERVO_FREQ         50      // Hz
+#define PULSE_HARD_MIN     130     // límite duro del servo / PCA9685
+#define PULSE_HARD_MAX     490
+#define SPEED_DELTA_MIN    12      // muy lento
+#define SPEED_DELTA_MAX    38      // rápido pero aún controlable
+#define SPEED_DELTA_DEFAULT ${speedDpsToPulseDelta(speedDps)}
 
 // ── Asignación de canales PCA9685 ────────────────────────────
 ${defineLines}
@@ -153,14 +178,24 @@ const uint8_t CH_IDX[5] = { CH_BASE, CH_SHOULDER, CH_ELBOW, CH_WRIST, CH_GRIPPER
 
 String buf = "";
 unsigned long _lastTick = 0;
+unsigned long _lastAtPos = 0;   // throttle de AT_POS (evita inundar el PC)
 
 // ── Trim neutral por servo (PWM exacto para que el servo no derive)
 // Editable en caliente con "NEU:b,h,c,w,g"
 uint16_t neu[5] = { ${neutrals.base}, ${neutrals.sho}, ${neutrals.elb}, ${neutrals.wri}, ${neutrals.grip} };
+uint8_t speedDelta = SPEED_DELTA_DEFAULT;
 
 // ── PWM según dirección: neutral exacto por servo = parado ────
 uint16_t dirPWM(uint8_t i, int d) {
-  return d > 0 ? PULSE_MAX : d < 0 ? PULSE_MIN : neu[i];
+  if (d > 0) return constrain((int)neu[i] + speedDelta, PULSE_HARD_MIN, PULSE_HARD_MAX);
+  if (d < 0) return constrain((int)neu[i] - speedDelta, PULSE_HARD_MIN, PULSE_HARD_MAX);
+  return neu[i];
+}
+
+void setSpeedProfile(float dps) {
+  dps = constrain(dps, ${MIN_SPEED_DPS}.0f, ${MAX_SPEED_DPS}.0f);
+  float t = (dps - ${MIN_SPEED_DPS}.0f) / (${MAX_SPEED_DPS - MIN_SPEED_DPS}.0f);
+  speedDelta = (uint8_t)roundf(SPEED_DELTA_MIN + t * (SPEED_DELTA_MAX - SPEED_DELTA_MIN));
 }
 
 // ── Aplica estado actual a todos los canales ──────────────────
@@ -192,6 +227,14 @@ void parseCmd(String cmd) {
     for (uint8_t i = 0; i < 5; i++) { sv[i].t = 0; sv[i].d = 0; }
     applyServos();
     Serial.println("OK HOME");
+    return;
+  }
+
+  if (cmd.startsWith("SPD:")) {
+    setSpeedProfile(cmd.substring(4).toFloat());
+    applyServos();
+    Serial.print("OK SPD ");
+    Serial.println(speedDelta);
     return;
   }
 
@@ -253,8 +296,8 @@ void loop() {
   }
 
   unsigned long now = millis();
-  if (now - _lastTick >= 10) {
-    float dt = constrain((now - _lastTick) / 1000.0f, 0.0f, 0.05f);
+  if (now - _lastTick >= 5) {
+    float dt = constrain((now - _lastTick) / 1000.0f, 0.0f, 0.02f);
     _lastTick = now;
 
     bool any = false;
@@ -266,7 +309,12 @@ void loop() {
       }
     }
     applyServos();
-    if (!any) Serial.println("AT_POS");
+    // AT_POS: un latido "sin movimiento" cada 500 ms como máximo.
+    // Antes se enviaba a 100 Hz y saturaba el canal serial + la UI.
+    if (!any && now - _lastAtPos >= 500) {
+      Serial.println("AT_POS");
+      _lastAtPos = now;
+    }
   }
 }`;
 }
@@ -383,6 +431,12 @@ let _readyTimer=null;        // fallback si Arduino no envía READY
 let _pingTimer=null;         // timeout de espera de PONG
 let _uploadAfterReady=false; // flag: subir firmware al recibir READY
 let _serverAvail=false;      // servidor arduino-cli disponible
+let _uploadInFlight=false;   // evita subidas duplicadas / carreras
+let _ignoreHotplugDuringUpload=false; // ignora hotplug mientras se flashea
+let _idleSyncInFlight=null;  // secuencia de reposo seguro tras READY/PONG
+const _rxWaiters = [];
+const READY_TIMEOUT_MS = 1200;
+const PING_TIMEOUT_MS  = 1200;
 
 /* ── Banner de auto-conexión ────────────────────────────────────────────── */
 function showAutoConnectBanner(serialPort) {
@@ -405,20 +459,25 @@ function _readyFallback() {
     if (!port) return;
     log('Sin READY — verificando firmware con PING…', 'info');
     sendRaw('PING');
-    // Si no llega PONG en 3 s más → el firmware no es el correcto
+    // Si no llega PONG pronto → el firmware no es el correcto
     _pingTimer = setTimeout(() => {
       if (port && !serialT) {
-        if (_serverAvail) {
-          log('⚠ Arduino sin firmware IPN — subiéndolo automáticamente…', 'info');
-          slog('⚠ Sin respuesta al protocolo — lanzando upload automático', 's-sy');
-          uploadFirmware();
+        if (_uploadAfterReady) {
+          if (_serverAvail) {
+            log('⚠ Arduino sin firmware IPN — subiendo porque lo pediste', 'info');
+            slog('⚠ Sin respuesta al protocolo — lanzando upload solicitado', 's-sy');
+            uploadFirmware();
+          } else {
+            log('⚠ Firmware no reconocido — abre start-server.bat para subirlo', 'err');
+            slog('⚠ Inicia start-server.bat (doble clic) para habilitar la subida', 's-er');
+          }
         } else {
-          log('⚠ Firmware no reconocido — abre start-server.bat para subirlo automáticamente', 'err');
-          slog('⚠ Inicia start-server.bat (doble clic) para habilitar upload automático', 's-er');
+          log('⚠ Firmware no reconocido — no se subirá hasta que lo pidas', 'err');
+          slog('⚠ Usa "⬆ Subir al Arduino" si quieres cargar el firmware IPN', 's-er');
         }
       }
-    }, 3000);
-  }, 3000);
+    }, PING_TIMEOUT_MS);
+  }, READY_TIMEOUT_MS);
 }
 
 /* Abre un puerto tolerando el caso "ya está abierto" (restos de sesión previa). */
@@ -462,8 +521,8 @@ async function autoConnectPort(serialPort, skipUpload = false) {
     if (st) st.textContent = 'Conectado @ 115200 baud';
     setConnStatus(true);   // Botón cambia a "Desconectar" inmediatamente
     hideAutoConnectBanner();
-    // Conectar sin forzar subida — si el firmware no responde al protocolo,
-    // _readyFallback() dispara upload automático solo cuando es necesario.
+    // Conectar sin forzar subida: la carga del firmware solo ocurre si el
+    // usuario la pidió explícitamente.
     slog('Puerto abierto @ 115200 baud — esperando READY…');
     _readyFallback();
     startReader();
@@ -473,10 +532,6 @@ async function autoConnectPort(serialPort, skipUpload = false) {
     slog('Error: ' + e.message, 's-er');
   }
 }
-
-// PWM helpers
-const PULSE_MIN=130, PULSE_MAX=490;
-function angleToPWM(a){ return Math.round(PULSE_MIN + (clamp(a,0,180)/180)*(PULSE_MAX-PULSE_MIN)); }
 
 /** Construye el string de comando TX desde el estado J actual.
     El protocolo siempre usa B:/H:/C:/W:/G: — los canales solo
@@ -495,12 +550,6 @@ function buildCmd() {
 
 /* ── Telemetría (servos de velocidad: valores en segundos) ─── */
 let _prevJ = {};
-
-// PWM que Arduino enviará según la dirección actual (-1/0/+1)
-function velPWM(secs, key) {
-  if (Math.abs(secs) < 0.01) return (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
-  return secs > 0 ? PULSE_MAX : PULSE_MIN;
-}
 
 function updateTelemetry() {
   ['base','sho','elb','wri','grip'].forEach(k => {
@@ -531,12 +580,73 @@ function updateTelemetry() {
 })();
 updateTelemetry();
 
-/* ── Consola serial ─────────────────────────────────────────── */
+/* ── Consola serial ───────────────────────────────────────────
+   Problema anterior: innerHTML += en cada mensaje re-parseaba toda
+   la consola (hasta 300 <div>s). Con el firmware enviando AT_POS
+   a 100 Hz y sendPos a 20 Hz la página quedaba congelada ~20% del
+   tiempo solo por reflows del DOM.
+   Solución: cola de mensajes + flush en un rAF + deduplicado de
+   mensajes idénticos consecutivos ("× N"). Usa fragment para añadir
+   en un solo reflow. */
+const _slogBuf        = [];
+let   _slogFlushPend  = false;
+let   _slogLastKey    = '';
+let   _slogLastCount  = 0;
+let   _slogLastDiv    = null;
+let   _slogLastBase   = '';
+const SLOG_MAX        = 300;
+
 function slog(msg, cls='s-sy') {
-  const el = document.getElementById('slog'); if (!el) return;
-  const t  = new Date().toLocaleTimeString('es-MX',{hour12:false});
-  el.innerHTML += `<div class="${cls}">[${t}] ${msg}</div>`;
-  while (el.children.length > 300) el.removeChild(el.firstChild);
+  const key = cls + '|' + msg;
+  // Dedupe: si el último mensaje fue idéntico, solo incrementa contador
+  if (key === _slogLastKey && _slogLastDiv) {
+    _slogLastCount++;
+    _slogLastDiv.textContent = _slogLastBase + ' (×' + _slogLastCount + ')';
+    return;
+  }
+  _slogLastKey   = key;
+  _slogLastCount = 1;
+  _slogBuf.push({ msg, cls, t: Date.now() });
+  if (!_slogFlushPend) {
+    _slogFlushPend = true;
+    requestAnimationFrame(_flushSlog);
+  }
+}
+
+function _fmtTime(ms) {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  return hh + ':' + mm + ':' + ss;
+}
+
+function _flushSlog() {
+  _slogFlushPend = false;
+  const el = document.getElementById('slog');
+  if (!el || !_slogBuf.length) return;
+  const frag = document.createDocumentFragment();
+  let last = null, lastBase = '';
+  for (let i = 0; i < _slogBuf.length; i++) {
+    const { msg, cls, t } = _slogBuf[i];
+    const div = document.createElement('div');
+    div.className = cls;
+    const base = '[' + _fmtTime(t) + '] ' + msg;
+    div.textContent = base;
+    frag.appendChild(div);
+    last = div; lastBase = base;
+  }
+  _slogBuf.length = 0;
+  el.appendChild(frag);
+  _slogLastDiv  = last;
+  _slogLastBase = lastBase;
+  // Recorte en lote (una sola pasada en lugar de while)
+  const over = el.children.length - SLOG_MAX;
+  if (over > 0) {
+    for (let i = 0; i < over; i++) el.removeChild(el.firstChild);
+    // si eliminamos el div del último mensaje, resetear dedupe
+    if (!el.contains(_slogLastDiv)) { _slogLastDiv = null; _slogLastKey = ''; }
+  }
   el.scrollTop = el.scrollHeight;
 }
 
@@ -561,24 +671,97 @@ let _lastSendMs  = 0;
  *  Llamar después de cambios de calibración para que no disparen envío automático. */
 function syncLastCmd() { _lastSentCmd = buildCmd(); _lastSendMs = performance.now(); }
 
-/* Servos de velocidad: cada comando es un temporizador en Arduino, por eso
-   si hay cualquier joint activo (≠0) hay que REFRESCAR el comando aunque
-   el valor no cambie. Si todo está en 0, basta con enviar una sola vez. */
-const REFRESH_MS = 600;  // renovar orden cada 600 ms (< 10 s que permite firmware)
+function _sleepMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-// Rate-limit mínimo entre envíos para no saturar el puerto ni el firmware.
-// Con maxSecs = 28–125 ms, evita spamear si la visión cambia el valor a 60 Hz.
-const MIN_TX_MS = 80;
+function waitSerialLine(match, timeoutMs = 700) {
+  const test = typeof match === 'function'
+    ? match
+    : line => String(line || '').includes(String(match));
+  return new Promise((resolve, reject) => {
+    let waiter = null;
+    const timer = setTimeout(() => {
+      const idx = _rxWaiters.indexOf(waiter);
+      if (idx >= 0) _rxWaiters.splice(idx, 1);
+      reject(new Error('Timeout esperando respuesta serial'));
+    }, timeoutMs);
+    waiter = {
+      test,
+      done: line => {
+        clearTimeout(timer);
+        resolve(line);
+      },
+    };
+    _rxWaiters.push(waiter);
+  });
+}
+
+function _dispatchSerialWaiters(line) {
+  for (let i = _rxWaiters.length - 1; i >= 0; i--) {
+    const waiter = _rxWaiters[i];
+    let ok = false;
+    try { ok = waiter.test(line); } catch {}
+    if (!ok) continue;
+    _rxWaiters.splice(i, 1);
+    try { waiter.done(line); } catch {}
+  }
+}
+
+async function ensureSafeIdle(source = 'serial') {
+  if (!writer) return;
+  if (_idleSyncInFlight) return _idleSyncInFlight;
+
+  _idleSyncInFlight = (async () => {
+    clearInterval(serialT); serialT = null;
+    stopNeuRefresh();
+    if (typeof cancelAllQueuedMoves === 'function') cancelAllQueuedMoves();
+
+    // Empuja varias veces el neutro y HOME para vencer inercia/deriva inicial.
+    for (let i = 0; i < 3; i++) {
+      try {
+        await sendNeutrals();
+        await waitSerialLine(line => line.startsWith('OK NEU'), 350);
+      } catch {}
+
+      try {
+        await sendRaw('HOME');
+        await waitSerialLine(line => line.startsWith('OK HOME'), 350);
+      } catch {}
+
+      await _sleepMs(120);
+    }
+
+    try {
+      await sendSpeedProfile();
+      await waitSerialLine(line => line.startsWith('OK SPD'), 350);
+    } catch {}
+
+    if (typeof resetAngPos === 'function') resetAngPos();
+    _lastSentCmd = buildCmd();
+    startNeuRefresh();
+    serialT = setInterval(sendPos, Math.round(1000 / serialHz));
+    log(`Reposo seguro aplicado (${source})`, 'info');
+  })().finally(() => {
+    _idleSyncInFlight = null;
+  });
+
+  return _idleSyncInFlight;
+}
+
+/* Modelo de pulsos: cada ciclo de commit (160 ms) emite UN pulso
+   discreto. sendPos solo envía cuando el comando cambia: nunca
+   refresca el mismo pulso (causaba que el firmware reiniciase el
+   temporizador antes de que venciera el anterior → servo corría
+   en continuo). */
+const MIN_TX_MS = 40;
 
 function sendPos() {
   const now = performance.now();
-  // Rate-limit duro: no enviar más rápido que MIN_TX_MS entre comandos
   if (now - _lastSendMs < MIN_TX_MS) return;
 
-  const cmd   = buildCmd();
-  const anyOn = JDEFS.some(d => Math.abs(J[d.key].v) > 0.01);
-  const changed = cmd !== _lastSentCmd;
-  if (!changed && (!anyOn || now - _lastSendMs < REFRESH_MS)) return;
+  const cmd = buildCmd();
+  if (cmd === _lastSentCmd) return;   // solo envía si cambió
 
   _lastSentCmd = cmd;
   _lastSendMs  = now;
@@ -638,6 +821,11 @@ async function startReader() {
         const line = rxBuf.substring(0,nl).trim();
         rxBuf = rxBuf.substring(nl+1);
         if (!line) continue;
+        // AT_POS es un heartbeat "no hay movimiento" del firmware.
+        // Lo ignoramos por completo: no aporta info al humano y con el
+        // firmware viejo (100 Hz) causaba freezes al loguearlo a DOM.
+        if (line === 'AT_POS') continue;
+        _dispatchSerialWaiters(line);
         slog('← ' + line, 's-rx');
         if (line.startsWith('OK') && lastTxMs > 0) {
           const lat = Math.round(performance.now() - lastTxMs);
@@ -647,11 +835,7 @@ async function startReader() {
           clearTimeout(_pingTimer);
           if (!serialT) {
             clearInterval(serialT);
-            sendNeutrals();
-            await sendRaw('HOME');
-            if (typeof resetAngPos === 'function') resetAngPos();
-            _lastSentCmd = buildCmd();
-            serialT = setInterval(sendPos, Math.round(1000 / serialHz));
+            await ensureSafeIdle('PONG');
             log('Firmware IPN-RoboArm verificado \u2713 — listo, mueve un servo para comenzar', 'ok');
           }
         }
@@ -659,20 +843,18 @@ async function startReader() {
           clearTimeout(_readyTimer);
           clearTimeout(_pingTimer);
           if (!line.includes('IPN-RoboArm')) {
-            log('\u26a0 Firmware distinto detectado — intentando subir el correcto\u2026', 'err');
+            log('\u26a0 Firmware distinto detectado', 'err');
             slog('\u26a0 Firmware no-IPN detectado (' + line + ')', 's-er');
-            if (_serverAvail) { uploadFirmware(); }
-            else { slog('\u26a0 Abre start-server.bat para subir el firmware automáticamente', 's-er'); }
+            if (_uploadAfterReady) {
+              if (_serverAvail) { uploadFirmware(); }
+              else { slog('\u26a0 Abre start-server.bat para subir el firmware', 's-er'); }
+            } else {
+              slog('\u26a0 Usa "⬆ Subir al Arduino" si quieres reemplazar ese firmware', 's-er');
+            }
             return;
           }
           log('Arduino listo: ' + line, 'ok');
-          sendNeutrals();
-          await sendRaw('HOME');
-          if (typeof resetAngPos === 'function') resetAngPos();
-          _lastSentCmd = buildCmd();
-          clearInterval(serialT);
-          serialT = setInterval(sendPos, Math.round(1000 / serialHz));
-          startNeuRefresh();
+          await ensureSafeIdle('READY');
           log('Listo \u2014 mueve un servo o activa la c\u00e1mara para comenzar', 'ok');
           if (_uploadAfterReady) { _uploadAfterReady = false; uploadFirmware(); }
         }
@@ -703,8 +885,7 @@ async function connectSerial() {
     slog('Puerto abierto @ 115200 baud — esperando READY…');
     log('Serial conectado', 'ok');
     setConnStatus(true);   // Botón cambia a "Desconectar" inmediatamente
-    // No subir firmware automáticamente al conectar: solo si _readyFallback
-    // detecta que el firmware cargado no responde al protocolo.
+    // No subir firmware automáticamente al conectar.
     _readyFallback();
     startReader();
   } catch(e) {
@@ -714,19 +895,36 @@ async function connectSerial() {
 }
 
 /* ── Desconectar ────────────────────────────────────────────── */
+// Promise.race con timeout: evita que reader.cancel()/port.close() cuelguen
+// la pestaña si el driver USB se queda pillado (causa típica de freezes).
+function _withTimeout(pr, ms) {
+  return Promise.race([
+    pr,
+    new Promise(resolve => setTimeout(resolve, ms)),
+  ]);
+}
+
 async function disconnectSerial() {
   clearInterval(serialT); serialT = null;
   clearTimeout(_readyTimer); _readyTimer = null;
   clearTimeout(_pingTimer);  _pingTimer  = null;
+  _idleSyncInFlight = null;
+  _rxWaiters.length = 0;
   stopNeuRefresh();
-  // Cancelar lector primero para que el stream cierre
-  if (reader) { try { await reader.cancel(); } catch(e){} try { reader.releaseLock(); } catch(e){} reader=null; }
-  if (writer) { try { await writer.close(); } catch(e){} try { writer.releaseLock(); } catch(e){} writer=null; }
-  if (port)   {
-    try { await port.close(); } catch(e){}
+  if (reader) {
+    try { await _withTimeout(reader.cancel(), 800); } catch(e){}
+    try { reader.releaseLock(); } catch(e){}
+    reader = null;
+  }
+  if (writer) {
+    try { await _withTimeout(writer.close(), 800); } catch(e){}
+    try { writer.releaseLock(); } catch(e){}
+    writer = null;
+  }
+  if (port) {
+    try { await _withTimeout(port.close(), 1200); } catch(e){}
     port = null;
-    // Breve pausa para que el driver USB libere el handle
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 150));
   }
   setConnStatus(false);
   slog('Desconectado'); log('Serial desconectado', 'info');
@@ -737,9 +935,9 @@ async function emergencyStop() {
   if (!writer) return;
   clearInterval(serialT); serialT=null;
   await sendRaw('HOME');
-  JDEFS.forEach(d => setJoint(d.key, d.def));
+  JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
   if (typeof resetAngPos === 'function') resetAngPos();
-  log('⚠ STOP — servos en HOME', 'err');
+  log('⚠ STOP — servos en HOME de referencia', 'err');
 }
 
 /* ── Presets ────────────────────────────────────────────────── */
@@ -749,7 +947,14 @@ let presets = JSON.parse(localStorage.getItem(PRESET_KEY) || '{}');
 function savePreset(slot) {
   const name = document.getElementById('preset-name-' + slot);
   if (!name || !name.value.trim()) { log('Escribe un nombre para el preset','err'); return; }
-  presets[slot] = { name:name.value.trim(), base:J.base.v, sho:J.sho.v, elb:J.elb.v, wri:J.wri.v, grip:J.grip.v };
+  presets[slot] = {
+    name: name.value.trim(),
+    base: J.base.target,
+    sho:  J.sho.target,
+    elb:  J.elb.target,
+    wri:  J.wri.target,
+    grip: J.grip.target,
+  };
   localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
   renderPresets(); log('Preset "'+presets[slot].name+'" guardado','ok');
 }
@@ -781,13 +986,17 @@ renderPresets();
 /* ── Sweep de servo (prueba de rango) ───────────────────────── */
 function sweepServo(key) {
   if (!writer) { log('Conecta primero el serial','err'); return; }
-  const mn=J[key].calMin, mx=J[key].calMax;
-  let i=0, steps=10;
+  const mn = J[key].calMin;
+  const mx = J[key].calMax;
+  let i = 0, steps = 10;
   const iv = setInterval(() => {
-    const v = i<steps ? lerp(mn,mx,i/steps) : lerp(mx,mn,(i-steps)/steps);
-    setJoint(key,v); sendRaw(buildCmd());
-    if (++i > steps*2) { clearInterval(iv); setJoint(key,(mn+mx)/2); }
-  }, 80);
+    const v = i < steps ? lerp(mn, mx, i / steps) : lerp(mx, mn, (i - steps) / steps);
+    setJointTarget(key, v);
+    if (++i > steps * 2) {
+      clearInterval(iv);
+      setJointTarget(key, (mn + mx) / 2);
+    }
+  }, COMMIT_MS);
 }
 
 /* ══════════════════════════════════ SUBIDA DE FIRMWARE ══════════════════════════════════ */
@@ -832,6 +1041,60 @@ function showServerHelp() {
     '                arduino-cli core install arduino:avr');
 }
 
+async function detectBoardInfo() {
+  if (!_serverAvail) return null;
+  try {
+    const r = await fetch('http://localhost:8080/detect',
+      { signal: AbortSignal.timeout(2500) });
+    const d = await r.json();
+    return d && (d.board || d.port || d.name) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+function shouldUseServerUploader(boardInfo) {
+  const fqbn = String(boardInfo?.board || '').toLowerCase();
+  // El flasher Web Serial actual está afinado para UNO/Optiboot.
+  // Para Mega y placas detectadas distintas, arduino-cli es mucho más fiable.
+  return !!fqbn && fqbn !== 'arduino:avr:uno';
+}
+
+async function uploadViaServer(inoSource, boardInfo = null, note = '') {
+  if (note) {
+    log(note, 'info');
+    slog(note, 's-sy');
+  }
+  const fqbn = boardInfo?.board || undefined;
+  const port = boardInfo?.port || undefined;
+  const r = await fetch('http://localhost:8080/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ino: inoSource, fqbn, port }),
+    signal: AbortSignal.timeout(90000),
+  });
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || d.output || 'arduino-cli upload falló');
+  return d;
+}
+
+function scheduleReconnectAfterUpload() {
+  const reconnect = async (attempt = 0) => {
+    if (attempt >= 5 || port || _uploadInFlight) return;
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (ports.length > 0 && !port) {
+        await autoConnectPort(ports[0], true); // true = no re-flashear
+        if (port) return;
+      }
+    } catch (e) {
+      slog('Reintento conexión ' + (attempt + 1) + ': ' + e.message, 's-er');
+    }
+    setTimeout(() => reconnect(attempt + 1), 800 + attempt * 400);
+  };
+  setTimeout(() => reconnect(0), 2500);
+}
+
 document.getElementById('btn-dl-fw').addEventListener('click', () => {
   const code = document.getElementById('fw').textContent;
   if (!code.trim()) { log('Genera el firmware primero', 'err'); return; }
@@ -845,6 +1108,10 @@ document.getElementById('btn-dl-fw').addEventListener('click', () => {
 });
 
 async function uploadFirmware() {
+  if (_uploadInFlight) {
+    log('Ya hay una subida en curso — espera a que termine', 'info');
+    return;
+  }
   if (!_serverAvail) {
     // Re-verificar (por si el usuario acaba de abrir start-server.bat)
     await checkServer();
@@ -855,79 +1122,93 @@ async function uploadFirmware() {
     }
   }
 
+  _uploadInFlight = true;
+  _ignoreHotplugDuringUpload = true;
+  _uploadAfterReady = false;
+  clearTimeout(_readyTimer); _readyTimer = null;
+  clearTimeout(_pingTimer);  _pingTimer  = null;
+  hideAutoConnectBanner();
+
+  const inoSource = generateFirmware();
+  const boardInfo = await detectBoardInfo();
+  const useServerDirect = shouldUseServerUploader(boardInfo);
+
   // Guardar referencia al puerto antes de desconectar
   let flashPort = port;
-  if (!flashPort) {
+  if (!useServerDirect && !flashPort) {
     // Intentar con un puerto ya autorizado (si lo hay) para no forzar conexión previa
     const ports = await navigator.serial.getPorts();
     if (ports.length === 0) {
+      _uploadInFlight = false;
+      _ignoreHotplugDuringUpload = false;
       log('No hay Arduino autorizado — pulsa ⚡ Conectar primero', 'err');
       return;
     }
     flashPort = ports[0];
   }
 
-  // 1. Compilar firmware en el servidor
-  log('Compilando firmware…', 'info');
-  slog('⬆ Compilando con arduino-cli…', 's-sy');
-  let hex;
   try {
-    const r = await fetch('http://localhost:8080/compile', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ino: generateFirmware() }),
-      signal: AbortSignal.timeout(60000),   // compile puede tardar, pero no infinito
-    });
-    const d = await r.json();
-    if (!d.ok) {
-      log('Error compilando: ' + (d.error || 'ver consola del servidor'), 'err');
-      slog('✗ Compilación fallida: ' + (d.error || d.output || '').slice(0, 200), 's-er');
-      return;
+    // Liberar el puerto del navegador antes de cualquier intento de subida.
+    await disconnectSerial();
+    await new Promise(r => setTimeout(r, 350));
+
+    if (useServerDirect) {
+      const boardLbl = boardInfo?.name || boardInfo?.board || 'placa detectada';
+      log(`Placa detectada: ${boardLbl} — usando arduino-cli`, 'info');
+      slog(`↺ Placa detectada: ${boardLbl} — subiendo con arduino-cli`, 's-sy');
+      await uploadViaServer(inoSource, boardInfo);
+    } else {
+      // 1. Compilar firmware en el servidor
+      log('Compilando firmware…', 'info');
+      slog('⬆ Compilando con arduino-cli…', 's-sy');
+      let hex;
+      try {
+        const r = await fetch('http://localhost:8080/compile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ino: inoSource, fqbn: boardInfo?.board || 'arduino:avr:uno' }),
+          signal: AbortSignal.timeout(60000),   // compile puede tardar, pero no infinito
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          log('Error compilando: ' + (d.error || 'ver consola del servidor'), 'err');
+          slog('✗ Compilación fallida: ' + (d.error || d.output || '').slice(0, 200), 's-er');
+          return;
+        }
+        hex = d.hex;
+        log('Compilación OK — subiendo al Arduino…', 'ok');
+        slog('✓ Compilado — subiendo por USB (STK500)…', 's-sy');
+      } catch(e) {
+        log('Sin respuesta del servidor: ' + e.message, 'err');
+        slog('✗ Timeout/error en /compile — reintenta tras iniciar start-server.bat', 's-er');
+        return;
+      }
+
+      // 2. Subir hex desde el browser via STK500/Optiboot (flasher.js)
+      try {
+        await flashArduino(flashPort, hex, pct => {
+          const pEl = document.getElementById('upload-progress');
+          if (pEl) pEl.textContent = Math.round(pct * 100) + '%';
+          if (pct < 1) slog('⬆ Subiendo… ' + Math.round(pct * 100) + '%', 's-sy');
+        });
+      } catch (stkErr) {
+        slog('⚠ STK500 falló — reintentando con arduino-cli…', 's-sy');
+        log('STK500 falló — reintentando con arduino-cli…', 'info');
+        await uploadViaServer(inoSource, boardInfo);
+      }
     }
-    hex = d.hex;
-    log('Compilación OK — subiendo al Arduino…', 'ok');
-    slog('✓ Compilado — subiendo por USB (STK500)…', 's-sy');
-  } catch(e) {
-    log('Sin respuesta del servidor: ' + e.message, 'err');
-    slog('✗ Timeout/error en /compile — reintenta tras iniciar start-server.bat', 's-er');
-    return;
-  }
 
-  // 2. Desconectar serial normal para liberar el puerto
-  await disconnectSerial();
-  await new Promise(r => setTimeout(r, 300));
-
-  // 3. Subir hex desde el browser via STK500/Optiboot (flasher.js)
-  try {
-    await flashArduino(flashPort, hex, pct => {
-      const pEl = document.getElementById('upload-progress');
-      if (pEl) pEl.textContent = Math.round(pct * 100) + '%';
-      if (pct < 1) slog('⬆ Subiendo… ' + Math.round(pct * 100) + '%', 's-sy');
-    });
     log('Firmware subido ✓ — reconectando…', 'ok');
     slog('✓ Firmware cargado — Arduino reiniciando', 's-ok');
-    // 4. Reconectar automáticamente tras el reinicio del Arduino
-    // Reintentar hasta 5 veces con backoff por si el driver USB aún no lo libera
-    const reconnect = async (attempt = 0) => {
-      if (attempt >= 5 || port) return;
-      try {
-        const ports = await navigator.serial.getPorts();
-        if (ports.length > 0 && !port) {
-          await autoConnectPort(ports[0], true); // true = no re-flashear
-          if (port) return;                       // conectado con éxito
-        }
-      } catch (e) {
-        slog('Reintento conexión ' + (attempt + 1) + ': ' + e.message, 's-er');
-      }
-      setTimeout(() => reconnect(attempt + 1), 800 + attempt * 400);
-    };
-    setTimeout(() => reconnect(0), 2500);
+    scheduleReconnectAfterUpload();
   } catch(e) {
     log('Error al subir firmware: ' + e.message, 'err');
-    slog('✗ STK500 error: ' + e.message, 's-er');
+    slog('✗ Upload error: ' + e.message, 's-er');
   } finally {
     const pEl = document.getElementById('upload-progress');
     if (pEl) pEl.textContent = '';
+    _uploadInFlight = false;
+    setTimeout(() => { _ignoreHotplugDuringUpload = false; }, 1200);
   }
 }
 
@@ -935,13 +1216,17 @@ async function uploadFirmware() {
 
 // Serial
 document.getElementById('btn-conn').addEventListener('click',
-  () => port ? disconnectSerial() : connectSerial());
+  () => {
+    if (port) { disconnectSerial(); return; }
+    _uploadAfterReady = false;
+    connectSerial();
+  });
 document.getElementById('btn-home-ser').addEventListener('click',
   () => {
-    JDEFS.forEach(d=>setJoint(d.key,d.def));
+    JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
     if (typeof resetAngPos === 'function') resetAngPos();
     sendRaw('HOME');
-    log('HOME enviado — posición angular reiniciada','ok');
+    log('HOME enviado — referencia angular reiniciada al HOME guardado','ok');
   });
 document.getElementById('btn-ping').addEventListener('click',
   () => sendRaw('PING'));
@@ -951,7 +1236,10 @@ document.getElementById('btn-send-raw').addEventListener('click',
 document.getElementById('inp-cmd').addEventListener('keydown',
   e => { if(e.key==='Enter') { const v=e.target.value.trim(); if(v) sendRaw(v); } });
 document.getElementById('btn-clr').addEventListener('click',
-  () => document.getElementById('slog').innerHTML='');
+  () => {
+    document.getElementById('slog').innerHTML='';
+    _slogLastDiv = null; _slogLastKey = ''; _slogLastCount = 0;
+  });
 
 // Firmware copy
 document.getElementById('btn-copy-fw').addEventListener('click', () =>
@@ -970,8 +1258,9 @@ document.getElementById('sl-hz').addEventListener('input', function() {
 // Velocidad de servos
 document.getElementById('sl-spd').addEventListener('input', function() {
   const spd = parseFloat(this.value);
-  document.getElementById('lv-spd').textContent = spd + ' °/s';
-  if (writer) sendRaw('SPD:' + spd);
+  const applied = applySpeedProfile(spd);
+  document.getElementById('lv-spd').textContent = applied + ' °/s';
+  if (writer) sendSpeedProfile();
 });
 
 // Auto-inicio
@@ -1041,6 +1330,7 @@ updateTelemChannels();
 
 // Botones del banner de auto-conexión
 document.getElementById('banner-btn-connect').addEventListener('click', () => {
+  _uploadAfterReady = false;
   if (_pendingPort) autoConnectPort(_pendingPort);
   else connectSerial();
   hideAutoConnectBanner();
@@ -1070,10 +1360,12 @@ if ('serial' in navigator) {
 
   // Enchufe en caliente → banner (no auto-conexión directa para evitar cascadas)
   navigator.serial.addEventListener('connect', e => {
+    if (_ignoreHotplugDuringUpload) return;
     if (!port) showAutoConnectBanner(e.target);
   });
 
   navigator.serial.addEventListener('disconnect', e => {
+    if (_ignoreHotplugDuringUpload) return;
     if (port && e.target === port) {
       disconnectSerial();
       log('Arduino desconectado', 'err');
@@ -1084,6 +1376,13 @@ if ('serial' in navigator) {
 // Seleccionar 115200 en el dropdown (matching al firmware)
 const _baudSel = document.getElementById('sel-baud');
 if (_baudSel) _baudSel.value = '115200';
+
+const _spdSel = document.getElementById('sl-spd');
+if (_spdSel) {
+  _spdSel.value = String(applySpeedProfile(parseFloat(_spdSel.value) || DEFAULT_SPEED_DPS));
+  const _spdLbl = document.getElementById('lv-spd');
+  if (_spdLbl) _spdLbl.textContent = speedDps + ' °/s';
+}
 
 // Verificar si el servidor arduino-cli está disponible
 checkServer();

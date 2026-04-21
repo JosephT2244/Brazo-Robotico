@@ -1,23 +1,23 @@
 /* ════════════════════════════════════════════════
-   vision.js — Control por posición de mano v11
+   vision.js — Control por brazo COMPLETO (Pose + Hands) v12
    ────────────────────────────────────────────────────────────────
-   ARQUITECTURA CORREGIDA:
+   ARQUITECTURA:
    1. getUserMedia → stream
-   2. Video visible + rAF draw loop INMEDIATAMENTE (nunca bloqueado)
-   3. MediaPipe Hands inicializa en background (no bloquea UI)
-   4. Una vez listo, los frames se envían a MediaPipe cada N frames
-   5. Resultados se aplican al brazo de forma asíncrona
+   2. Video visible + rAF draw loop INMEDIATAMENTE
+   3. MediaPipe Pose + Hands inicializan en paralelo (no bloquean UI)
+   4. Cada N frames: envía imagen a Pose y a Hands
+   5. Resultados combinados se aplican al brazo
 
-   MAPEO mano → servo (servos de velocidad, salida en SEGUNDOS):
-     palmX  → Base   (CH4): izquierda=+s (adelante), derecha=-s (atrás)
-     palmY  → Hombro (CH3): arriba=+s, abajo=-s
-     palmZ  → Codo   (CH2): cerca=+s (flexión), lejos=-s (extensión)
-     orient → Muñeca (CH1): rotación → ±s
-     pinch  → Pinza  (CH0): juntos=+s (cerrar), separados=-s (abrir)
+   MAPEO anatómico → servo:
+     BASE   (CH4): yaw hombro→muñeca (rotación horizontal del brazo)
+     HOMBRO (CH3): elevación del hombro (ángulo torso / brazo superior)
+     CODO   (CH2): flexión del codo  (ángulo brazo sup. / antebrazo)
+     MUÑECA (CH1): roll de la mano (de Hands, o del antebrazo)
+     PINZA  (CH0): pinch dedos pulgar-índice (de Hands)
 
-   Cada articulación tiene zona muerta en el centro (todo parado).
+   Si Pose no detecta el brazo → fallback a control por mano (legacy).
 
-   Dependencias: shared.js (J, JDEFS, clamp, lerp, batchJoints, log, modal)
+   Dependencias: shared.js (J, JDEFS, clamp, lerp, batchTargets, log, modal)
    ═══════════════════════════════════════════════ */
 
 /* ─── DOM refs ──────────────────────────────────────────────── */
@@ -29,46 +29,101 @@ const pmCtx     = poseMapEl.getContext('2d');
 
 /* ─── Estado ────────────────────────────────────────────────── */
 let handInst       = null;
+let poseInst       = null;
 let camActive      = false;
-let mpReady        = false;   // MediaPipe inicializado y listo
+let mpReady        = false;   // Pose listo (mínimo para brazo completo)
+let handsReady     = false;   // Hands listo (añade pinza + muñeca fina)
 let mirrorOn       = false;
 let selectedDevId  = null;
 let _selBound      = false;
 let _rafId         = null;    // rAF del draw loop
-let _frameCount    = 0;       // Para throttle de MediaPipe (1 de N frames)
-const MP_SKIP      = 2;       // Procesar 1 de cada 3 frames con MediaPipe
+let _frameCount    = 0;       // Throttle MediaPipe
+const MP_SKIP      = 2;       // Procesar 1 de cada 3 frames
 
 /* ─── Parámetros ajustables ─────────────────────────────────── */
 let SENS_X = 120;
 let SENS_Y = 130;
 let SENS_Z = 100;
-let ALPHA1 = 0.55;   // EMA-1: anti-ruido (MÁS alto = más suave). Antes 0.92 → la señal tardaba segundos en propagarse.
-let ALPHA2 = 0.70;   // EMA-2: suavidad de movimiento. Antes 0.95 → respuesta casi plana.
+let ALPHA1 = 0.40;   // EMA-1: anti-ruido. Más bajo = seguimiento más directo del gesto.
+let ALPHA2 = 0.55;   // EMA-2: suavidad. Balance entre respuesta y estabilidad del servo.
 
 /* ─── Zona muerta y mapeo a GRADOS objetivo ────────────────────
    Cada eje mide distancia desde el centro (0.5 para X/Y).
    Zona muerta → ignora temblores. Fuera de la zona muerta el
-   delta se mapea linealmente al rango ±angLim del servo. */
-const DEADZONE = 0.15;
+   delta se mapea linealmente al rango ±VISION_LIMITS[jointKey].
+
+   VISION_LIMITS: topes duros específicos de modo visión (grados ±).
+   Son MÁS estrictos que J[].angLim para proteger el hardware contra
+   gestos extremos. Rangos totales pedidos por el usuario:
+     base 180° → ±90, hombro 90° → ±45, codo 60° → ±30,
+     muñeca 180° → ±90, pinza 60° → ±30. */
+const DEADZONE = 0.18;
+const VISION_LIMITS = {
+  base: 90,   // ±90  → 180° totales
+  sho:  45,   // ±45  → 90°  totales
+  elb:  30,   // ±30  → 60°  totales
+  wri:  90,   // ±90  → 180° totales
+  grip: 30,   // ±30  → 60°  totales
+};
+
+/* ─── CUADRÍCULA DE CONTROL 2D ────────────────────────────────────
+   Rectángulo centrado en el hombro dentro del frame de cámara.
+   dx/dy del wrist AL hombro se normalizan a ±1 dividiendo por estas
+   medias anchura/altura y se mapean a ±VISION_LIMITS[base|sho].
+   Fuera del rect → saturación dura (no hay servo más allá de la reja).
+   Es el mapeo que "ves" en la cámara, por eso se dibuja como guía.
+   Antes usábamos atan2(x,-z) de pose3D para la base, pero Z en
+   poseWorldLandmarks es ruidoso y envuelve ±180°, causando giros >180°
+   al acercar el brazo al plano de cámara. La reja 2D lo evita. */
+const GRID_HALF_X = 0.28;   // ± fracción del ancho del frame
+const GRID_HALF_Y = 0.30;   // ± fracción del alto del frame
+/** Límite efectivo: MENOR entre el tope mecánico (angLim) y el de visión */
+function visionCap(key) {
+  const mech = J[key]?.angLim ?? 90;
+  const vis  = VISION_LIMITS[key] ?? mech;
+  return Math.min(mech, vis);
+}
 /** delta = desviación del centro (-0.5..+0.5); devuelve grados objetivo */
 function posToTargetDeg(delta, jointKey) {
   const d = Math.abs(delta);
-  const lim = J[jointKey]?.angLim ?? 90;
+  const lim = visionCap(jointKey);
   if (d < DEADZONE) return 0;
   const t = (d - DEADZONE) / (0.5 - DEADZONE);          // 0..1
-  return Math.sign(delta) * Math.min(1, t) * lim;
+  const deg = Math.sign(delta) * Math.min(1, t) * lim;
+  return clamp(deg, -lim, lim);
 }
 
 /* ─── Filtros por articulación ──────────────────────────────── */
 const F = {};
 JDEFS.forEach(d => { F[d.key] = { e1: d.def, e2: d.def }; });
 
-/* ─── Último resultado de MediaPipe ─────────────────────────── */
-let latestHand = null;
+/* ─── Últimos resultados de MediaPipe ───────────────────────── */
+let latestHand      = null;  // lm 2D de la mano (21 puntos)
+let latestPose2D    = null;  // poseLandmarks 2D (imagen normalizada)
+let latestPoseWorld = null;  // poseWorldLandmarks 3D (metros, centrado en cadera)
+
+/* ¿Qué lado del cuerpo seguimos? "right" = lado derecho del usuario (mirror).
+   Landmarks Pose: R_SHOULDER=12, R_ELBOW=14, R_WRIST=16, R_HIP=24.
+                   L_SHOULDER=11, L_ELBOW=13, L_WRIST=15, L_HIP=23. */
+let ARM_SIDE = 'right';
+const SIDE_IDX = {
+  right: { sho:12, elb:14, wri:16, hip:24 },
+  left:  { sho:11, elb:13, wri:15, hip:23 },
+};
 
 /* ─── Rate-limit de envío al brazo (evita congelamiento) ────── */
 const ARM_MIN_MS = 60;    // máx ~16 Hz al brazo — respuesta fluida sin saturar
 let _lastArmUpdate = 0;
+
+/* ─── CONGELAMIENTO POR LÍMITE ──────────────────────────────────
+   Cuando TODOS los servos saturan su tope de visión simultáneamente
+   (el gesto está claramente fuera del rango permitido), congelamos:
+     • no enviamos targets al brazo (ni al 3D)
+     • ocultamos las guías sobre el video de la cámara
+   Se sale del modo congelado tan pronto como alguna articulación
+   deje de estar saturada (el usuario recoge el brazo). */
+const LIMIT_EPS = 0.98;   // 98% del tope = "al límite"
+let _armFrozen  = false;
 
 /* ─── Toggles overlay ────────────────────────────────────────── */
 const CT = { skeleton:true, pinch:true, labels:false, trail:false };
@@ -88,13 +143,60 @@ let _fpsFrames=0, _fpsLast=performance.now();
 function _ui(id,v){ const e=document.getElementById(id); if(e&&e.textContent!==String(v)) e.textContent=v; }
 function _bar(id,p){ const e=document.getElementById(id); if(e) e.style.width=clamp(p,0,100)+'%'; }
 
+function disableVisionBaseControls() {
+  const sl = document.getElementById('sl-sens-x');
+  if (sl) {
+    sl.disabled = true;
+    sl.style.opacity = '0.45';
+    sl.title = 'Base desactivada en visión: usa Q/A';
+  }
+  _ui('lv-sens-x', 'Q/A');
+}
+
 /* ─── Filtro de señal doble EMA (en GRADOS objetivo) ────────── */
 function applyFilter(key, raw) {
-  const lim = J[key]?.angLim ?? 90;
+  const lim = visionCap(key);
   raw = clamp(raw, -lim, lim);
   F[key].e1 = lerp(raw, F[key].e1, ALPHA1);
   F[key].e2 = lerp(F[key].e1, F[key].e2, ALPHA2);
-  return clamp(F[key].e2, -lim, lim);
+  F[key].e1 = clamp(F[key].e1, -lim, lim);
+  F[key].e2 = clamp(F[key].e2, -lim, lim);
+  return F[key].e2;
+}
+
+function lockBaseToKeyboardOnly() {
+  /* Al entrar en visión, base (CH4) se congela donde está.
+     Desde aquí en adelante solo teclado/manual puede cambiarla. */
+  setJointTarget('base', J.base.angPos);
+  F.base.e1 = F.base.e2 = J.base.angPos;
+  _ui('p-shx', '— (solo teclas Q/A)');
+  _ui('cd-base', Math.round(J.base.angPos) + '°');
+}
+
+function setBaseUiLock(locked) {
+  [
+    'sl-base',
+    'ard-sl-base',
+    'deg-inp-base',
+    'ard-sweep-base',
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = locked;
+    el.style.opacity = locked ? '0.45' : '';
+    if (locked) el.title = 'Base bloqueada en visión: usa Q/A';
+    else if (el.title === 'Base bloqueada en visión: usa Q/A') el.title = '';
+  });
+
+  document.querySelectorAll('[data-dkey="base"]').forEach(el => {
+    el.disabled = locked;
+    el.style.opacity = locked ? '0.45' : '';
+    if (locked) el.title = 'Base bloqueada en visión: usa Q/A';
+    else if (el.title === 'Base bloqueada en visión: usa Q/A') el.title = '';
+  });
+
+  const card = document.getElementById('jb-base');
+  if (card) card.style.opacity = locked ? '0.65' : '';
 }
 
 /* ─── Pinza: distancia pulgar(4)-índice(8) normalizada ─────── */
@@ -128,8 +230,7 @@ populateCameraList();
 if (navigator.mediaDevices.addEventListener)
   navigator.mediaDevices.addEventListener('devicechange', populateCameraList);
 
-/* ══════════════════════════════════ CALLBACK DE MEDIAPIPE — recibe resultado de cada frame
-   ══════════════════════════════════ */
+/* ══════════════════════════════════ CALLBACKS DE MEDIAPIPE ══════════════════════════════════ */
 function onHandResults(res) {
   if (!res.multiHandLandmarks?.length) { latestHand=null; return; }
   let best = res.multiHandLandmarks[0];
@@ -137,43 +238,174 @@ function onHandResults(res) {
   latestHand = best;
 }
 
-/* ════════════════════════════════ PROCESAMIENTO DE FRAME — calcula targets y aplica al brazo ════════════════════════════════ */
+function onPoseResults(res) {
+  if (!res.poseLandmarks) { latestPose2D=null; latestPoseWorld=null; return; }
+  latestPose2D    = res.poseLandmarks;
+  latestPoseWorld = res.poseWorldLandmarks || null;
+  /* Lado seguido: el que tenga mayor visibilidad en la muñeca */
+  const rV = res.poseLandmarks[16]?.visibility ?? 0;
+  const lV = res.poseLandmarks[15]?.visibility ?? 0;
+  if (rV > lV + 0.1) ARM_SIDE = 'right';
+  else if (lV > rV + 0.1) ARM_SIDE = 'left';
+}
+
+/* ─── Utilidades geométricas ────────────────────────────────── */
+function _sub(a,b){ return { x:a.x-b.x, y:a.y-b.y, z:a.z-b.z }; }
+function _len(v){ return Math.hypot(v.x, v.y, v.z); }
+function _norm(v){ const l=_len(v)||1; return { x:v.x/l, y:v.y/l, z:v.z/l }; }
+function _dot(a,b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+function _angBetween(a,b){ // grados
+  const na=_norm(a), nb=_norm(b);
+  return Math.acos(clamp(_dot(na,nb), -1, 1)) * 180/Math.PI;
+}
+
+/* ════════════════════════════════ PROCESAMIENTO DE FRAME ════════════════════════════════
+   Usa Pose (brazo) como fuente primaria; Hands aporta pinza + muñeca.
+   Calcula 5 targets anatómicos en GRADOS, los pasa por filtro doble
+   EMA y los enruta al brazo mediante batchTargets. */
 function processFrame() {
+  const p2 = latestPose2D;
+  const pw = latestPoseWorld;
   const lm = latestHand;
-  if (!lm) {
-    /* Sin mano: mantener posición con inercia (el brazo se queda donde está) */
-    _ui('pm-status', 'SIN MANO');
+
+  /* Sin Pose ni Hands → nada que hacer */
+  if (!p2 && !lm) {
+    _armFrozen = false;
+    _ui('pm-status', 'SIN BRAZO');
     document.getElementById('pm-status').style.color='var(--err)';
     _ui('p-conf', '0%'); _bar('conf-bar', 0);
     return;
   }
 
-  /* Centro de palma (promedio de nudillos + muñeca) */
-  const palmX = (lm[0].x+lm[5].x+lm[9].x+lm[13].x+lm[17].x)/5;
-  const palmY = (lm[0].y+lm[5].y+lm[9].y+lm[13].y+lm[17].y)/5;
-  const palmZ = (lm[0].z+lm[5].z+lm[9].z)/3;
+  const S_I = SIDE_IDX[ARM_SIDE];
+  const shoulder2D = p2 ? p2[S_I.sho] : null;
+  const elbow2D    = p2 ? p2[S_I.elb] : null;
+  const wrist2D    = p2 ? p2[S_I.wri] : null;
+  const hip2D      = p2 ? p2[S_I.hip] : null;
 
-  /* Confianza estimada por tamaño de mano */
-  const sz   = dist2(lm[0], lm[9]);
-  const conf = clamp(sz*4.5, 0, 1);
+  /* Visibilidad del brazo completo (0..1) */
+  const vis = p2
+    ? Math.min(shoulder2D?.visibility ?? 0, elbow2D?.visibility ?? 0, wrist2D?.visibility ?? 0)
+    : 0;
 
-  /* Mapeo posición → GRADOS objetivo (zona muerta por eje) */
-  const rawBase = posToTargetDeg(0.5 - palmX, 'base');
-  const rawSho  = posToTargetDeg(0.5 - palmY, 'sho');
-  const zDelta  = -clamp(palmZ, -0.25, 0.25);
-  const rawElb  = posToTargetDeg(zDelta * 2, 'elb');
-  const handAng = Math.atan2(lm[9].y-lm[0].y, lm[9].x-lm[0].x)*180/Math.PI;
-  const rawWri  = posToTargetDeg(clamp(handAng / 180, -0.5, 0.5), 'wri');
-  const open    = pinchOpen(lm) ?? 0.5;
-  const rawGrip = posToTargetDeg(0.5 - open, 'grip');
+  let rawSho, rawElb, rawWri, rawGrip;
 
-  /* Rastro */
-  if (CT.trail) { TRAIL.push({x:palmX,y:palmY}); if(TRAIL.length>TRAIL_MAX)TRAIL.shift(); }
-  else TRAIL.length=0;
+  if (p2 && vis > 0.45 && pw) {
+    /* ═══════ MODO BRAZO COMPLETO (Pose 3D + reja 2D) ═══════ */
+    const S = pw[S_I.sho], E = pw[S_I.elb], W = pw[S_I.wri];
 
-  /* Filtrar siempre (mantiene inercia), pero solo actualizar el brazo a 10 Hz
-     máximo — evita saturar serial y congelar la UI con maxSecs pequeños. */
-  const fBase = applyFilter('base', rawBase);
+    /* Vectores anatómicos en metros (para CODO) */
+    const SE = _sub(E, S);    // brazo superior
+    const EW = _sub(W, E);    // antebrazo
+
+    /* BASE + HOMBRO: CUADRÍCULA 2D centrada en el hombro.
+       dx/dy del wrist al hombro, normalizados a ±1 por la media
+       anchura/altura de la reja. Fuera de la reja → saturación dura.
+       Esto elimina los saltos de yaw 3D (> 180°) al cruzar el plano
+       de cámara y coincide 1:1 con el rectángulo dibujado en pantalla. */
+    const dxFrac = wrist2D.x - shoulder2D.x;
+    const dyFrac = wrist2D.y - shoulder2D.y;
+    const xN = clamp(dxFrac / GRID_HALF_X, -1, 1);
+    const yN = clamp(dyFrac / GRID_HALF_Y, -1, 1);
+    rawSho  = -yN * VISION_LIMITS.sho;   // y sube ⇒ dy<0 ⇒ rawSho>0
+
+    /* CODO: flexión del codo. Ángulo en el vértice E entre -SE y EW.
+       Extendido = 180°. Flexionado 90° = 90°. Totalmente cerrado = 0°.
+       Neutro = 135° (ligeramente flexionado). Mapeamos a ±30°.
+       Flexión (doblado) → positivo; extensión → negativo. */
+    const ES = { x:-SE.x, y:-SE.y, z:-SE.z };
+    const elbFlex = _angBetween(ES, EW);      // 0..180
+    const elbDelta = (135 - elbFlex) / 45;    // recto→-1, doblado→+1
+    rawElb = clamp(elbDelta, -1, 1) * VISION_LIMITS.elb;
+
+    /* MUÑECA: si tenemos Hands usamos roll de la mano; si no, usamos
+       dirección del antebrazo proyectada (aproximación). */
+    if (lm) {
+      const handAng = Math.atan2(lm[9].y-lm[0].y, lm[9].x-lm[0].x)*180/Math.PI;
+      rawWri = clamp(handAng + 90, -VISION_LIMITS.wri, VISION_LIMITS.wri);
+    } else {
+      const fwAng = Math.atan2(EW.x, EW.y) * 180/Math.PI;
+      rawWri = clamp(fwAng, -VISION_LIMITS.wri, VISION_LIMITS.wri);
+    }
+
+    /* PINZA: si Hands está activo usa pinch; si no, mantén última. */
+    if (lm) {
+      const open = pinchOpen(lm) ?? 0.5;
+      rawGrip = posToTargetDeg(open - 0.5, 'grip');
+    } else {
+      rawGrip = F.grip.e2;   // conserva último
+    }
+
+    /* UI: muestra grados objetivo (ya clampados a la reja).
+       p-shx (base) muestra "—" porque la base está bloqueada en visión. */
+    _ui('p-shy', Math.round(rawSho)+'°');
+    _ui('p-shx', '— (solo teclas Q/A)');
+    _ui('p-elb', elbFlex.toFixed(0)+'°');
+    _ui('p-wri', (lm ? Math.atan2(lm[9].y-lm[0].y, lm[9].x-lm[0].x)*180/Math.PI : 0).toFixed(0)+'°');
+    _ui('p-grip', lm ? ((pinchOpen(lm)||0)*100).toFixed(0)+'%' : '—');
+    const pm=document.getElementById('pm-status');
+    if(pm){ pm.textContent = vis>0.8?'BRAZO OK':vis>0.6?'BRAZO':'BRAZO DÉBIL';
+            pm.style.color = vis>0.8?'var(--ok)':vis>0.6?'var(--warn)':'var(--err)'; }
+    _ui('p-conf', Math.round(vis*100)+'%');
+    _bar('conf-bar', vis*100);
+  }
+  else if (lm) {
+    /* ═══════ FALLBACK: solo mano (Pose no detecta brazo) ═══════ */
+    const palmX = (lm[0].x+lm[5].x+lm[9].x+lm[13].x+lm[17].x)/5;
+    const palmY = (lm[0].y+lm[5].y+lm[9].y+lm[13].y+lm[17].y)/5;
+    const palmZ = (lm[0].z+lm[5].z+lm[9].z)/3;
+    const sz    = dist2(lm[0], lm[9]);
+    const conf  = clamp(sz*4.5, 0, 1);
+    if (conf < 0.18) {
+      _ui('pm-status', 'DÉBIL'); _ui('p-conf', Math.round(conf*100)+'%'); _bar('conf-bar', conf*100);
+      return;
+    }
+    rawSho  = posToTargetDeg(0.5 - palmY, 'sho');
+    const szNorm = clamp((sz - 0.14) / 0.18, -0.5, 0.5);
+    const zSig   = clamp(-palmZ * 4, -0.5, 0.5);
+    rawElb = posToTargetDeg(clamp(szNorm*0.55 + zSig*0.45, -0.5, 0.5), 'elb');
+    const handAng = Math.atan2(lm[9].y-lm[0].y, lm[9].x-lm[0].x)*180/Math.PI;
+    rawWri  = posToTargetDeg(clamp((handAng+90)/180, -0.5, 0.5), 'wri');
+    const open = pinchOpen(lm) ?? 0.5;
+    rawGrip = posToTargetDeg(open - 0.5, 'grip');
+    const pm=document.getElementById('pm-status');
+    if(pm){ pm.textContent='SOLO MANO'; pm.style.color='var(--warn)'; }
+    _ui('p-conf', Math.round(conf*100)+'%');
+    _bar('conf-bar', conf*100);
+  } else {
+    _ui('pm-status', 'SIN BRAZO');
+    document.getElementById('pm-status').style.color='var(--err)';
+    return;
+  }
+
+  /* Rastro: sigue la muñeca (2D) si hay Pose; si no, el centro de la palma */
+  if (CT.trail) {
+    const tx = wrist2D ? wrist2D.x
+             : lm ? (lm[0].x+lm[9].x)/2 : null;
+    const ty = wrist2D ? wrist2D.y
+             : lm ? (lm[0].y+lm[9].y)/2 : null;
+    if (tx != null) { TRAIL.push({x:tx, y:ty}); if(TRAIL.length>TRAIL_MAX) TRAIL.shift(); }
+  } else TRAIL.length=0;
+
+  /* Detección de saturación: ¿están TODOS los targets pegados al tope?
+     BASE se excluye — en modo visión la base NO se mueve, solo teclado. */
+  const atCap = (raw, key) => Math.abs(raw) >= visionCap(key) * LIMIT_EPS;
+  const allSat =
+    atCap(rawSho,'sho') && atCap(rawElb,'elb') &&
+    atCap(rawWri,'wri') && atCap(rawGrip,'grip');
+  _armFrozen = allSat;
+
+  if (_armFrozen) {
+    /* Congelado: no filtramos (evita que los EMA sigan empujando),
+       no enviamos al brazo, y marcamos el estado en UI. */
+    const pm = document.getElementById('pm-status');
+    if (pm) { pm.textContent='LÍMITE ALCANZADO'; pm.style.color='var(--err)'; }
+    _ui('cam-mode-lbl', 'LÍMITE — DETENIDO');
+    return;
+  }
+
+  /* Doble EMA + rate-limit al brazo.
+     BASE queda fuera del envío — en modo visión solo se mueve por teclado. */
   const fSho  = applyFilter('sho',  rawSho);
   const fElb  = applyFilter('elb',  rawElb);
   const fWri  = applyFilter('wri',  rawWri);
@@ -182,31 +414,35 @@ function processFrame() {
   const nowMs = performance.now();
   if (nowMs - _lastArmUpdate >= ARM_MIN_MS) {
     _lastArmUpdate = nowMs;
-    batchTargets({ base: fBase, sho: fSho, elb: fElb, wri: fWri, grip: fGrip });
+    batchTargets({
+      sho:  clamp(fSho,  -visionCap('sho'),  visionCap('sho')),
+      elb:  clamp(fElb,  -visionCap('elb'),  visionCap('elb')),
+      wri:  clamp(fWri,  -visionCap('wri'),  visionCap('wri')),
+      grip: clamp(fGrip, -visionCap('grip'), visionCap('grip')),
+    });
   }
 
-  /* UI de telemetría */
-  const pct = Math.round(conf*100);
-  _ui('p-conf', pct+'%');  _bar('conf-bar', pct);
-  _bar('sg-pose', pct);    _ui('sv-pose', pct+'%');
-  _ui('p-shy', palmX.toFixed(2));
-  _ui('p-shx', palmY.toFixed(2));
-  _ui('p-elb', palmZ.toFixed(3));
-  _ui('p-wri', handAng.toFixed(0)+'°');
-  _ui('p-grip', (open*100).toFixed(0)+'%');
+  /* Restaura label si ya no está congelado */
+  if (mpReady) _ui('cam-mode-lbl', 'BRAZO COMPLETO');
+  else if (handsReady) _ui('cam-mode-lbl', 'SOLO MANO');
+
+  /* Barras y ángulos filtrados */
+  _bar('sg-pose', (vis||0)*100);
+  _ui('sv-pose', Math.round((vis||0)*100)+'%');
   const sfmt = v => Math.round(v) + '°';
-  _ui('cd-base', sfmt(F.base.e2));
-  _ui('cd-sho',  sfmt(F.sho.e2));
-  _ui('cd-elb',  sfmt(F.elb.e2));
-  _ui('cd-wri',  sfmt(F.wri.e2));
-  _ui('cd-grip', sfmt(F.grip.e2));
-  const closed=open<0.28;
-  _ui('pinch-val', closed?'CERRADO':(open*100).toFixed(0)+'%');
-  const pd=document.getElementById('pinch-dot'); if(pd) pd.className=closed?'open':'';
-  _bar('sg-grip', open*100);
-  _ui('sv-grip2', (open*100).toFixed(0)+'%');
-  const pm=document.getElementById('pm-status');
-  if(pm){ pm.textContent=conf>0.6?'ÓPTIMO':conf>0.35?'PARCIAL':'DÉBIL'; pm.style.color=conf>0.6?'var(--ok)':conf>0.35?'var(--warn)':'var(--err)'; }
+  _ui('cd-base', sfmt(J.base.target));   // base la gestiona el teclado, no visión
+  _ui('cd-sho',  sfmt(J.sho.target));
+  _ui('cd-elb',  sfmt(J.elb.target));
+  _ui('cd-wri',  sfmt(J.wri.target));
+  _ui('cd-grip', sfmt(J.grip.target));
+  if (lm) {
+    const op = pinchOpen(lm) ?? 0.5;
+    const closed = op < 0.28;
+    _ui('pinch-val', closed?'CERRADO':(op*100).toFixed(0)+'%');
+    const pd=document.getElementById('pinch-dot'); if(pd) pd.className=closed?'open':'';
+    _bar('sg-grip', op*100);
+    _ui('sv-grip2', (op*100).toFixed(0)+'%');
+  }
 }
 
 /* ═══════════════════════════════════════════════
@@ -228,30 +464,47 @@ function drawLoop() {
     else           { camCtx.drawImage(camVideo, 0, 0, W, H); }
   }
 
-  /* Overlay landmarks */
+  /* Overlay landmarks — se ocultan por completo cuando el sistema está
+     congelado (todos los servos al tope). Eso deja la cámara "limpia"
+     como aviso visual y evita sugerir que el control sigue activo. */
   const lm = latestHand;
-  if (lm) {
-    if (CT.trail && TRAIL.length>1) _drawTrail(W, H);
-    if (CT.skeleton)  _drawHand(lm, W, H);
-    if (CT.pinch)     _drawPinch(lm, W, H);
-    _drawCrossHair(lm, W, H);
-  } else {
-    /* Sin mano: mensaje */
+  const p2 = latestPose2D;
+  let anyDrawn = false;
+  if (!_armFrozen) {
+    if (p2) { _drawGrid(p2, W, H); anyDrawn=true; }
+    if (CT.trail && TRAIL.length>1) { _drawTrail(W, H); anyDrawn=true; }
+    if (p2 && CT.skeleton) { _drawArm(p2, W, H); anyDrawn=true; }
+    if (lm) {
+      if (CT.skeleton) _drawHand(lm, W, H);
+      if (CT.pinch)    _drawPinch(lm, W, H);
+      _drawCrossHair(lm, W, H);
+      anyDrawn=true;
+    }
+  }
+  if (_armFrozen) {
+    /* Mensaje claro en rojo semitransparente */
+    camCtx.fillStyle='rgba(140,20,40,0.82)';
+    camCtx.fillRect(0, H/2 - 14, W, 28);
+    camCtx.fillStyle='#FDFAF6';
+    camCtx.font=`700 ${Math.max(10,Math.round(W*0.045))}px IBM Plex Mono,monospace`;
+    camCtx.textAlign='center';
+    camCtx.fillText('LÍMITE · DETENIDO', W/2, H/2 + 5);
+    camCtx.textAlign='left';
+  } else if (!anyDrawn) {
     camCtx.fillStyle='rgba(253,250,246,0.45)';
     camCtx.font='600 10px IBM Plex Mono,monospace';
     camCtx.textAlign='center';
-    camCtx.fillText(mpReady?'Muestre la mano':'Cargando IA…', W/2, H/2);
+    camCtx.fillText(mpReady?'Muestre el brazo':'Cargando IA…', W/2, H/2);
     camCtx.textAlign='left';
   }
 
-  /* Enviar a MediaPipe (throttled) */
-  if (mpReady && handInst && camVideo.readyState>=2) {
-    if (_frameCount % (MP_SKIP+1) === 0) {
-      handInst.send({ image: camVideo }).catch(()=>{});
-      processFrame();
-    }
-    _frameCount++;
+  /* Enviar a MediaPipe (throttled): Pose + Hands en paralelo */
+  if (camVideo.readyState>=2 && _frameCount % (MP_SKIP+1) === 0) {
+    if (poseInst && mpReady)  poseInst.send({ image: camVideo }).catch(()=>{});
+    if (handInst && handsReady) handInst.send({ image: camVideo }).catch(()=>{});
+    if (mpReady || handsReady) processFrame();
   }
+  _frameCount++;
 
   /* FPS */
   _fpsFrames++;
@@ -261,8 +514,129 @@ function drawLoop() {
     _fpsFrames=0; _fpsLast=now;
   }
 
-  /* Mapa miniatura */
-  _drawHandMap(lm);
+  /* Mapa miniatura: también se apaga cuando el brazo está congelado */
+  if (_armFrozen) { pmCtx.clearRect(0,0,poseMapEl.width||260,poseMapEl.height||74); }
+  else if (p2)     _drawArmMap(p2);
+  else             _drawHandMap(lm);
+}
+
+/* ─── Cuadrícula activa de control ──────────────────────────────
+   Rect centrado en el hombro. El wrist dentro del rect mueve base/
+   hombro linealmente; fuera del rect los servos están SATURADOS al
+   tope y un círculo rojo marca el wrist como "fuera de alcance". */
+function _drawGrid(p2, W, H) {
+  const I = SIDE_IDX[ARM_SIDE];
+  const S = p2[I.sho]; const Wr = p2[I.wri];
+  if (!S) return;
+  const cx = S.x * W, cy = S.y * H;
+  const hx = GRID_HALF_X * W, hy = GRID_HALF_Y * H;
+
+  camCtx.save();
+  /* Rect exterior: tope del control */
+  camCtx.strokeStyle = 'rgba(212,160,64,0.72)';
+  camCtx.lineWidth = 1.8;
+  camCtx.setLineDash([6,4]);
+  camCtx.strokeRect(cx - hx, cy - hy, hx*2, hy*2);
+  camCtx.setLineDash([]);
+  /* Cruz central: 0° de base y hombro */
+  camCtx.strokeStyle = 'rgba(212,160,64,0.30)';
+  camCtx.lineWidth = 1;
+  camCtx.beginPath();
+  camCtx.moveTo(cx - hx, cy); camCtx.lineTo(cx + hx, cy);
+  camCtx.moveTo(cx, cy - hy); camCtx.lineTo(cx, cy + hy);
+  camCtx.stroke();
+  /* Esquinas reforzadas (vértices de la zona) */
+  camCtx.strokeStyle = 'rgba(140,20,40,0.85)';
+  camCtx.lineWidth = 2.2;
+  const cs = Math.min(hx, hy) * 0.18;
+  [[cx-hx,cy-hy,1,1],[cx+hx,cy-hy,-1,1],[cx-hx,cy+hy,1,-1],[cx+hx,cy+hy,-1,-1]]
+    .forEach(([x,y,sx,sy])=>{
+      camCtx.beginPath();
+      camCtx.moveTo(x+sx*cs, y); camCtx.lineTo(x, y); camCtx.lineTo(x, y+sy*cs);
+      camCtx.stroke();
+    });
+  /* Marca wrist fuera de reja */
+  if (Wr) {
+    const wx = Wr.x * W, wy = Wr.y * H;
+    const outside = Math.abs(Wr.x - S.x) > GRID_HALF_X
+                 || Math.abs(Wr.y - S.y) > GRID_HALF_Y;
+    if (outside) {
+      camCtx.strokeStyle = '#8C1428'; camCtx.lineWidth = 2.5;
+      const r = Math.max(10, Math.min(18, W*0.05));
+      camCtx.beginPath(); camCtx.arc(wx, wy, r, 0, Math.PI*2); camCtx.stroke();
+      camCtx.beginPath();
+      camCtx.moveTo(wx-r*0.55, wy-r*0.55); camCtx.lineTo(wx+r*0.55, wy+r*0.55);
+      camCtx.stroke();
+    }
+  }
+  camCtx.restore();
+}
+
+/* ─── Dibujar brazo (Pose) ───────────────────────────────────── */
+function _drawArm(p2, W, H) {
+  const I = SIDE_IDX[ARM_SIDE];
+  const S = p2[I.sho], E = p2[I.elb], Wr = p2[I.wri], Hp = p2[I.hip];
+  const other = ARM_SIDE==='right' ? p2[11] : p2[12];
+  const pts = [S,E,Wr,Hp,other].filter(p=>p && (p.visibility===undefined || p.visibility>0.35));
+  if (pts.length < 2) return;
+
+  const toXY = p => [p.x*W, p.y*H];
+  /* Torso (hombros + cadera del lado) */
+  if (other && Hp) {
+    camCtx.globalAlpha=0.45; camCtx.strokeStyle='#907070'; camCtx.lineWidth=1.3;
+    const [ax,ay]=toXY(S), [bx,by]=toXY(other), [hx,hy]=toXY(Hp);
+    camCtx.beginPath(); camCtx.moveTo(ax,ay); camCtx.lineTo(bx,by); camCtx.stroke();
+    camCtx.beginPath(); camCtx.moveTo(ax,ay); camCtx.lineTo(hx,hy); camCtx.stroke();
+  }
+  /* Segmentos del brazo */
+  const segs = [[S,E,'#D4A040'],[E,Wr,'#8C1428']];
+  segs.forEach(([a,b,col])=>{
+    if(!a||!b) return;
+    const [x1,y1]=toXY(a), [x2,y2]=toXY(b);
+    camCtx.globalAlpha=0.85; camCtx.strokeStyle=col; camCtx.lineWidth=3.0; camCtx.lineCap='round';
+    camCtx.beginPath(); camCtx.moveTo(x1,y1); camCtx.lineTo(x2,y2); camCtx.stroke();
+  });
+  /* Articulaciones */
+  const joints = [[S,'#D4A040','HOMBRO'],[E,'#C4742C','CODO'],[Wr,'#8C1428','MUÑECA']];
+  joints.forEach(([p,col,lbl])=>{
+    if(!p) return;
+    const [x,y]=toXY(p);
+    camCtx.globalAlpha=0.25; camCtx.beginPath(); camCtx.arc(x,y,10,0,Math.PI*2); camCtx.fillStyle=col; camCtx.fill();
+    camCtx.globalAlpha=1;    camCtx.beginPath(); camCtx.arc(x,y,4.5,0,Math.PI*2); camCtx.fillStyle=col; camCtx.fill();
+    camCtx.strokeStyle='rgba(255,255,250,0.9)'; camCtx.lineWidth=1.2;
+    camCtx.beginPath(); camCtx.arc(x,y,6.5,0,Math.PI*2); camCtx.stroke();
+    if(CT.labels) _lbl(x+8,y-6,lbl,col,W);
+  });
+  camCtx.globalAlpha=1;
+}
+
+function _drawArmMap(p2){
+  const W=poseMapEl.offsetWidth||260, H=74;
+  poseMapEl.width=W; poseMapEl.height=H; pmCtx.clearRect(0,0,W,H);
+  const I = SIDE_IDX[ARM_SIDE];
+  const pts = [p2[I.sho], p2[I.elb], p2[I.wri], p2[I.hip]];
+  if (pts.some(p=>!p)) return;
+  /* Caja de encuadre del brazo + cadera para escalar el mini-mapa */
+  const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs);
+  const minY=Math.min(...ys), maxY=Math.max(...ys);
+  const dx=Math.max(0.05,maxX-minX), dy=Math.max(0.05,maxY-minY);
+  const pad=8;
+  const mx=p=>((p.x-minX)/dx)*(W-2*pad)+pad;
+  const my=p=>((p.y-minY)/dy)*(H-2*pad)+pad;
+
+  pmCtx.globalAlpha=0.55; pmCtx.strokeStyle='#907878'; pmCtx.lineWidth=1.0;
+  pmCtx.beginPath(); pmCtx.moveTo(mx(p2[I.sho]),my(p2[I.sho])); pmCtx.lineTo(mx(p2[I.hip]),my(p2[I.hip])); pmCtx.stroke();
+  const segs=[[I.sho,I.elb,'#D4A040'],[I.elb,I.wri,'#8C1428']];
+  segs.forEach(([a,b,col])=>{
+    pmCtx.globalAlpha=0.90; pmCtx.strokeStyle=col; pmCtx.lineWidth=2.0; pmCtx.lineCap='round';
+    pmCtx.beginPath(); pmCtx.moveTo(mx(p2[a]),my(p2[a])); pmCtx.lineTo(mx(p2[b]),my(p2[b])); pmCtx.stroke();
+  });
+  [[I.sho,'#D4A040'],[I.elb,'#C4742C'],[I.wri,'#8C1428']].forEach(([i,col])=>{
+    pmCtx.globalAlpha=1; pmCtx.beginPath(); pmCtx.arc(mx(p2[i]),my(p2[i]),3,0,Math.PI*2);
+    pmCtx.fillStyle=col; pmCtx.fill();
+  });
+  pmCtx.globalAlpha=1;
 }
 
 /* ─── Dibujar rastro ─────────────────────────────────────────── */
@@ -377,6 +751,7 @@ async function startCam() {
 
     /* 2. Activar UI y drawLoop ANTES de inicializar MediaPipe */
     camActive = true;
+    window.__camOn = true;    // bloquea BASE (shared.js la ignora en visión)
     _ui('cam-mode-lbl', 'CARGANDO IA…');
     document.getElementById('cam-overlay').style.display    = 'flex';
     document.getElementById('signal-bar').style.display     = 'flex';
@@ -392,6 +767,9 @@ async function startCam() {
 
     /* Resetear filtros al objetivo actual (evita saltos al iniciar) */
     JDEFS.forEach(d=>{ F[d.key].e1=F[d.key].e2=J[d.key].target; });
+    lockBaseToKeyboardOnly();
+    setBaseUiLock(true);
+    log('Base CH4 bloqueada en visión — control solo con Q/A', 'info');
 
     /* Iniciar draw loop rAF — el video es visible desde AQUÍ */
     _frameCount=0; _fpsFrames=0; _fpsLast=performance.now();
@@ -411,6 +789,7 @@ async function startCam() {
     document.getElementById('btn-overlay-stop').style.display = 'none';
     document.getElementById('cam-overlay').style.display      = 'none';
     camActive = false;
+    window.__camOn = false;
     log('Error: ' + err.message, 'err');
     modal('Error al acceder a la cámara',
       'No se pudo iniciar la webcam.\n\n' +
@@ -420,45 +799,77 @@ async function startCam() {
   }
 }
 
-/* Inicializa MediaPipe en background — no bloquea el draw loop */
+/* Inicializa Pose + Hands en background — no bloquean el draw loop */
 async function _initMediaPipe() {
-  if (typeof Hands === 'undefined') {
-    log('MediaPipe Hands no disponible — modo básico activado', 'err');
+  const havePose  = typeof Pose  !== 'undefined';
+  const haveHands = typeof Hands !== 'undefined';
+  if (!havePose && !haveHands) {
+    log('MediaPipe no disponible', 'err');
     _ui('cam-mode-lbl', 'SIN IA');
     return;
   }
-  try {
-    handInst = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-    handInst.setOptions({
-      maxNumHands:            1,
-      modelComplexity:        0,   /* 0 = ligero y rápido, 1 = preciso */
-      minDetectionConfidence: 0.60,
-      minTrackingConfidence:  0.55,
-    });
-    handInst.onResults(onHandResults);
 
-    /* initialize() descarga los pesos — puede tardar 3-8s */
-    await handInst.initialize();
-
-    if (!camActive) return; /* Si se detuvo mientras cargaba */
-    mpReady = true;
-    document.getElementById('st-hand').className = 'chip on';
-    _ui('cam-mode-lbl', 'POSICIÓN MANO');
-    log('MediaPipe Hands listo ✓', 'ok');
-  } catch(e) {
-    log('Error al inicializar IA: ' + e.message, 'err');
-    _ui('cam-mode-lbl', 'ERROR IA');
+  /* Pose — fuente primaria (brazo completo) */
+  if (havePose) {
+    try {
+      poseInst = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+      poseInst.setOptions({
+        modelComplexity:        0,    // rápido (lite)
+        smoothLandmarks:        true,
+        enableSegmentation:     false,
+        minDetectionConfidence: 0.55,
+        minTrackingConfidence:  0.55,
+      });
+      poseInst.onResults(onPoseResults);
+      await poseInst.initialize();
+      if (!camActive) return;
+      mpReady = true;
+      _ui('cam-mode-lbl', 'BRAZO COMPLETO');
+      log('MediaPipe Pose listo ✓', 'ok');
+    } catch(e) {
+      log('Error Pose: ' + e.message, 'err');
+    }
   }
+
+  /* Hands — aporta pinza y roll fino de muñeca */
+  if (haveHands) {
+    try {
+      handInst = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+      handInst.setOptions({
+        maxNumHands:            1,
+        modelComplexity:        0,
+        minDetectionConfidence: 0.55,
+        minTrackingConfidence:  0.55,
+      });
+      handInst.onResults(onHandResults);
+      await handInst.initialize();
+      if (!camActive) return;
+      handsReady = true;
+      document.getElementById('st-hand').className = 'chip on';
+      log('MediaPipe Hands listo ✓', 'ok');
+    } catch(e) {
+      log('Error Hands: ' + e.message, 'err');
+    }
+  }
+
+  if (!mpReady && !handsReady) _ui('cam-mode-lbl', 'ERROR IA');
 }
 
 /* ─── Parar cámara ───────────────────────────────────────────── */
 function stopCam() {
   camActive = false;
+  window.__camOn = false;   // desbloquea BASE
   mpReady   = false;
+  handsReady= false;
+  _armFrozen= false;
+  setBaseUiLock(false);
   latestHand= null;
+  latestPose2D    = null;
+  latestPoseWorld = null;
 
   if (_rafId) { cancelAnimationFrame(_rafId); _rafId=null; }
   if (handInst) { try{handInst.close();}catch(e){} handInst=null; }
+  if (poseInst) { try{poseInst.close();}catch(e){} poseInst=null; }
   if (camVideo.srcObject) { camVideo.srcObject.getTracks().forEach(t=>t.stop()); camVideo.srcObject=null; }
 
   TRAIL.length=0;
@@ -494,6 +905,7 @@ document.getElementById('sl-sens-y').addEventListener('input',function(){ SENS_Y
 document.getElementById('sl-sens-z').addEventListener('input',function(){ SENS_Z=parseFloat(this.value); _ui('lv-sens-z',SENS_Z+'°'); });
 document.getElementById('sl-smooth').addEventListener('input',function(){ ALPHA2=parseFloat(this.value); _ui('lv-smooth',ALPHA2.toFixed(2)); });
 document.getElementById('sl-smooth2').addEventListener('input',function(){ ALPHA1=parseFloat(this.value); _ui('lv-smooth2',ALPHA1.toFixed(2)); });
+disableVisionBaseControls();
 
 /* ══════════════════════════════════ OVERLAY ARRASTRABLE ══════════════════════════════════ */
 (function(){
