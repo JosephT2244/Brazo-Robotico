@@ -25,6 +25,9 @@ const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
 
+/* Rutas y parámetros base del companion server.
+   El sketch y la compilación viven en carpetas temporales para no ensuciar
+   el proyecto con artefactos generados por arduino-cli. */
 const ROOT_DIR   = __dirname;
 const PORT       = parseInt(process.argv[2]) || 8080;
 const SKETCH_DIR = path.join(os.tmpdir(), 'roboarm_fw');
@@ -32,6 +35,7 @@ const INO_PATH   = path.join(SKETCH_DIR, 'roboarm_fw.ino');
 const BUILD_DIR  = path.join(os.tmpdir(), 'roboarm_build');
 const DEFAULT_FQBN = 'arduino:avr:uno';
 
+// Resuelve primero rutas explícitas/locales y luego cae al PATH global.
 function resolveArduinoCli() {
   const candidates = [
     process.env.ARDUINO_CLI,
@@ -50,6 +54,7 @@ function resolveArduinoCli() {
 const ARDUINO_CLI = resolveArduinoCli();
 let lastDetected = { port: null, board: null, name: null };
 
+// Wrapper promisificado para binarios con argumentos separados.
 function execFileText(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
     execFile(file, args, { cwd: ROOT_DIR, windowsHide: true, ...opts }, (err, stdout, stderr) => {
@@ -64,6 +69,7 @@ function execFileText(file, args, opts = {}) {
   });
 }
 
+// Variante para comandos completos cuando PowerShell/cmd lo requieren.
 function execText(command, opts = {}) {
   return new Promise((resolve, reject) => {
     exec(command, { cwd: ROOT_DIR, windowsHide: true, ...opts }, (err, stdout, stderr) => {
@@ -78,14 +84,17 @@ function execText(command, opts = {}) {
   });
 }
 
+// Punto único para invocar arduino-cli con la ruta resuelta.
 function runArduinoCli(args, opts = {}) {
   return execFileText(ARDUINO_CLI, args, opts);
 }
 
+// Une stdout/stderr en un solo bloque legible para logs y respuestas HTTP.
 function mergeOutput(stdout, stderr) {
   return [stdout, stderr].filter(Boolean).join('\n').trim();
 }
 
+// Conserva la última detección útil para mejorar reintentos posteriores.
 function rememberBoard(info = {}) {
   if (info.port)  lastDetected.port  = info.port;
   if (info.board) lastDetected.board = info.board;
@@ -97,6 +106,7 @@ function rememberBoard(info = {}) {
   };
 }
 
+// Normaliza la salida JSON de distintas versiones de arduino-cli.
 function parseBoardList(stdout) {
   try {
     const data = JSON.parse(stdout);
@@ -129,6 +139,7 @@ function parseBoardList(stdout) {
   }
 }
 
+// Fallback del sistema operativo cuando arduino-cli aún no identifica la placa.
 function listSystemSerialPorts() {
   const ps = "[System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object | ConvertTo-Json -Compress";
   return execFileText('powershell', ['-NoProfile', '-Command', ps], { timeout: 5000 })
@@ -141,6 +152,7 @@ function listSystemSerialPorts() {
     .catch(() => []);
 }
 
+// Asigna preferencia al puerto esperado y a entradas que sí parecen serial USB.
 function rankPortCandidate(item, preferredPort = null) {
   let score = 0;
   if (preferredPort && item.port === preferredPort) score += 1000;
@@ -160,6 +172,8 @@ function setCORS(res) {
 }
 
 /* ── Detectar Arduino conectado vía arduino-cli board list ─────── */
+/* Combina la detección de arduino-cli con los puertos del sistema para no
+   perder el dispositivo aunque la CLI tarde en reconocer la placa exacta. */
 async function detectBoard(preferredPort = null) {
   let cliPorts = [];
   try {
@@ -189,6 +203,8 @@ async function detectBoard(preferredPort = null) {
 }
 
 /* ── Solo compilar → devuelve contenido del .hex ─────────────── */
+/* Se usa cuando el navegador hará la subida por Web Serial/STK500 y solo
+   necesita el .hex final, no una carga completa desde el servidor. */
 async function compileOnly(inoSource, fqbn) {
   const board = fqbn || DEFAULT_FQBN;
   fs.mkdirSync(SKETCH_DIR, { recursive: true });
@@ -218,6 +234,8 @@ async function compileOnly(inoSource, fqbn) {
 }
 
 /* ── Compilar + subir ─────────────────────────────────────────── */
+/* Ruta clásica: el servidor compila y luego delega a arduino-cli la carga
+   directa al puerto serie detectado o solicitado. */
 async function compileAndUpload(inoSource, fqbn, serialPort) {
   fs.mkdirSync(SKETCH_DIR, { recursive: true });
   fs.mkdirSync(BUILD_DIR,  { recursive: true });
@@ -260,6 +278,7 @@ async function compileAndUpload(inoSource, fqbn, serialPort) {
 }
 
 /* ── Leer body JSON ─────────────────────────────────────────────── */
+// Parser mínimo para requests pequeñas enviadas desde la UI web.
 function readJSON(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -273,6 +292,8 @@ function readJSON(req) {
 }
 
 /* ── Servidor HTTP ─────────────────────────────────────────────── */
+/* Router deliberadamente simple: pocas rutas, sin framework externo y con
+   respuestas JSON para que el front tenga una integración predecible. */
 const server = http.createServer(async (req, res) => {
   setCORS(res);
 

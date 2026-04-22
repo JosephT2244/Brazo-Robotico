@@ -33,7 +33,7 @@ let poseInst       = null;
 let camActive      = false;
 let mpReady        = false;   // Pose listo (mínimo para brazo completo)
 let handsReady     = false;   // Hands listo (añade pinza + muñeca fina)
-let mirrorOn       = false;
+let mirrorOn       = true;
 let selectedDevId  = null;
 let _selBound      = false;
 let _rafId         = null;    // rAF del draw loop
@@ -53,17 +53,17 @@ let ALPHA2 = 0.55;   // EMA-2: suavidad. Balance entre respuesta y estabilidad d
    delta se mapea linealmente al rango ±VISION_LIMITS[jointKey].
 
    VISION_LIMITS: topes duros específicos de modo visión (grados ±).
-   Son MÁS estrictos que J[].angLim para proteger el hardware contra
-   gestos extremos. Rangos totales pedidos por el usuario:
-     base 180° → ±90, hombro 90° → ±45, codo 60° → ±30,
+   Por defecto siguen el rango físico disponible; si luego quieres
+   hacer visión más conservadora, bájalos aquí. Rangos totales:
+     base 240° → ±120, hombro 90° → ±45, codo 120° → ±60,
      muñeca 180° → ±90, pinza 60° → ±30. */
 const DEADZONE = 0.18;
 const VISION_LIMITS = {
-  base: 90,   // ±90  → 180° totales
-  sho:  45,   // ±45  → 90°  totales
-  elb:  30,   // ±30  → 60°  totales
-  wri:  90,   // ±90  → 180° totales
-  grip: 30,   // ±30  → 60°  totales
+  base: PHYSICAL_LIMITS.base,  // ±120 → 240° totales
+  sho:  Math.min(PHYSICAL_LIMITS.sho, VISION_ACTIVE_LIMITS.sho ?? PHYSICAL_LIMITS.sho), // ±45  → 90° totales
+  elb:  PHYSICAL_LIMITS.elb,   // ±60  → 120° totales
+  wri:  PHYSICAL_LIMITS.wri,   // ±90  → 180° totales
+  grip: PHYSICAL_LIMITS.grip,  // ±30  → 60°  totales
 };
 
 /* ─── CUADRÍCULA DE CONTROL 2D ────────────────────────────────────
@@ -77,11 +77,23 @@ const VISION_LIMITS = {
    al acercar el brazo al plano de cámara. La reja 2D lo evita. */
 const GRID_HALF_X = 0.28;   // ± fracción del ancho del frame
 const GRID_HALF_Y = 0.30;   // ± fracción del alto del frame
+const VISION_STICKY_EPS = {
+  sho: 3.5,   // ignora microcambios del hombro para reducir temblor
+};
+const VISION_FILTER_ALPHA = {
+  sho: { a1: 0.52, a2: 0.74 },
+};
 /** Límite efectivo: MENOR entre el tope mecánico (angLim) y el de visión */
 function visionCap(key) {
   const mech = J[key]?.angLim ?? 90;
   const vis  = VISION_LIMITS[key] ?? mech;
   return Math.min(mech, vis);
+}
+function stabilizeVisionTarget(key, deg) {
+  const eps = VISION_STICKY_EPS[key];
+  if (typeof eps !== 'number' || !J[key]) return deg;
+  const current = clamp(J[key].target, -visionCap(key), visionCap(key));
+  return Math.abs(deg - current) < eps ? current : deg;
 }
 /** delta = desviación del centro (-0.5..+0.5); devuelve grados objetivo */
 function posToTargetDeg(delta, jointKey) {
@@ -101,6 +113,27 @@ JDEFS.forEach(d => { F[d.key] = { e1: d.def, e2: d.def }; });
 let latestHand      = null;  // lm 2D de la mano (21 puntos)
 let latestPose2D    = null;  // poseLandmarks 2D (imagen normalizada)
 let latestPoseWorld = null;  // poseWorldLandmarks 3D (metros, centrado en cadera)
+let latestHandRaw   = null;  // mano cruda desde MediaPipe (sin espejo)
+let latestPose2DRaw = null;  // pose 2D cruda desde MediaPipe (sin espejo)
+
+function _mirrorPoint2D(p) {
+  return { ...p, x: 1 - p.x };
+}
+
+function _map2DLandmarksForView(list) {
+  if (!list) return null;
+  return mirrorOn ? list.map(_mirrorPoint2D) : list;
+}
+
+function syncVisionMirrorState() {
+  latestHand   = _map2DLandmarksForView(latestHandRaw);
+  latestPose2D = _map2DLandmarksForView(latestPose2DRaw);
+}
+
+function updateMirrorButton() {
+  const btn = document.getElementById('btn-mirror');
+  if (btn) btn.textContent = mirrorOn ? '⇔ Espejo: ON' : '⇔ Espejo';
+}
 
 /* ¿Qué lado del cuerpo seguimos? "right" = lado derecho del usuario (mirror).
    Landmarks Pose: R_SHOULDER=12, R_ELBOW=14, R_WRIST=16, R_HIP=24.
@@ -148,7 +181,7 @@ function disableVisionBaseControls() {
   if (sl) {
     sl.disabled = true;
     sl.style.opacity = '0.45';
-    sl.title = 'Base desactivada en visión: usa Q/A';
+    sl.title = 'Base gestionada por teclado: usa Q/A';
   }
   _ui('lv-sens-x', 'Q/A');
 }
@@ -156,9 +189,12 @@ function disableVisionBaseControls() {
 /* ─── Filtro de señal doble EMA (en GRADOS objetivo) ────────── */
 function applyFilter(key, raw) {
   const lim = visionCap(key);
+  const fa = VISION_FILTER_ALPHA[key];
+  const alpha1 = fa?.a1 ?? ALPHA1;
+  const alpha2 = fa?.a2 ?? ALPHA2;
   raw = clamp(raw, -lim, lim);
-  F[key].e1 = lerp(raw, F[key].e1, ALPHA1);
-  F[key].e2 = lerp(F[key].e1, F[key].e2, ALPHA2);
+  F[key].e1 = lerp(raw, F[key].e1, alpha1);
+  F[key].e2 = lerp(F[key].e1, F[key].e2, alpha2);
   F[key].e1 = clamp(F[key].e1, -lim, lim);
   F[key].e2 = clamp(F[key].e2, -lim, lim);
   return F[key].e2;
@@ -169,7 +205,7 @@ function lockBaseToKeyboardOnly() {
      Desde aquí en adelante solo teclado/manual puede cambiarla. */
   setJointTarget('base', J.base.angPos);
   F.base.e1 = F.base.e2 = J.base.angPos;
-  _ui('p-shx', '— (solo teclas Q/A)');
+  _ui('p-shx', '— (teclado Q/A)');
   _ui('cd-base', Math.round(J.base.angPos) + '°');
 }
 
@@ -184,15 +220,15 @@ function setBaseUiLock(locked) {
     if (!el) return;
     el.disabled = locked;
     el.style.opacity = locked ? '0.45' : '';
-    if (locked) el.title = 'Base bloqueada en visión: usa Q/A';
-    else if (el.title === 'Base bloqueada en visión: usa Q/A') el.title = '';
+    if (locked) el.title = 'Base gestionada por teclado: usa Q/A';
+    else if (el.title === 'Base gestionada por teclado: usa Q/A') el.title = '';
   });
 
   document.querySelectorAll('[data-dkey="base"]').forEach(el => {
     el.disabled = locked;
     el.style.opacity = locked ? '0.45' : '';
-    if (locked) el.title = 'Base bloqueada en visión: usa Q/A';
-    else if (el.title === 'Base bloqueada en visión: usa Q/A') el.title = '';
+    if (locked) el.title = 'Base gestionada por teclado: usa Q/A';
+    else if (el.title === 'Base gestionada por teclado: usa Q/A') el.title = '';
   });
 
   const card = document.getElementById('jb-base');
@@ -232,21 +268,33 @@ if (navigator.mediaDevices.addEventListener)
 
 /* ══════════════════════════════════ CALLBACKS DE MEDIAPIPE ══════════════════════════════════ */
 function onHandResults(res) {
-  if (!res.multiHandLandmarks?.length) { latestHand=null; return; }
+  if (!res.multiHandLandmarks?.length) {
+    latestHandRaw = null;
+    latestHand = null;
+    return;
+  }
   let best = res.multiHandLandmarks[0];
-  res.multiHandedness?.forEach((h,i)=>{ if(h.label==='Right') best=res.multiHandLandmarks[i]; });
-  latestHand = best;
+  const preferredLabel = ARM_SIDE === 'right' ? 'Left' : 'Right';
+  res.multiHandedness?.forEach((h,i)=>{ if(h.label===preferredLabel) best=res.multiHandLandmarks[i]; });
+  latestHandRaw = best;
+  syncVisionMirrorState();
 }
 
 function onPoseResults(res) {
-  if (!res.poseLandmarks) { latestPose2D=null; latestPoseWorld=null; return; }
-  latestPose2D    = res.poseLandmarks;
+  if (!res.poseLandmarks) {
+    latestPose2DRaw = null;
+    latestPose2D = null;
+    latestPoseWorld = null;
+    return;
+  }
+  latestPose2DRaw = res.poseLandmarks;
   latestPoseWorld = res.poseWorldLandmarks || null;
   /* Lado seguido: el que tenga mayor visibilidad en la muñeca */
   const rV = res.poseLandmarks[16]?.visibility ?? 0;
   const lV = res.poseLandmarks[15]?.visibility ?? 0;
   if (rV > lV + 0.1) ARM_SIDE = 'right';
   else if (lV > rV + 0.1) ARM_SIDE = 'left';
+  syncVisionMirrorState();
 }
 
 /* ─── Utilidades geométricas ────────────────────────────────── */
@@ -307,11 +355,11 @@ function processFrame() {
     const dyFrac = wrist2D.y - shoulder2D.y;
     const xN = clamp(dxFrac / GRID_HALF_X, -1, 1);
     const yN = clamp(dyFrac / GRID_HALF_Y, -1, 1);
-    rawSho  = -yN * VISION_LIMITS.sho;   // y sube ⇒ dy<0 ⇒ rawSho>0
+    rawSho  = yN * VISION_LIMITS.sho;    // y sube ⇒ dy<0 ⇒ rawSho<0
 
     /* CODO: flexión del codo. Ángulo en el vértice E entre -SE y EW.
        Extendido = 180°. Flexionado 90° = 90°. Totalmente cerrado = 0°.
-       Neutro = 135° (ligeramente flexionado). Mapeamos a ±30°.
+       Neutro = 135° (ligeramente flexionado). Mapeamos a ±60°.
        Flexión (doblado) → positivo; extensión → negativo. */
     const ES = { x:-SE.x, y:-SE.y, z:-SE.z };
     const elbFlex = _angBetween(ES, EW);      // 0..180
@@ -360,7 +408,7 @@ function processFrame() {
       _ui('pm-status', 'DÉBIL'); _ui('p-conf', Math.round(conf*100)+'%'); _bar('conf-bar', conf*100);
       return;
     }
-    rawSho  = posToTargetDeg(0.5 - palmY, 'sho');
+    rawSho  = posToTargetDeg(palmY - 0.5, 'sho');
     const szNorm = clamp((sz - 0.14) / 0.18, -0.5, 0.5);
     const zSig   = clamp(-palmZ * 4, -0.5, 0.5);
     rawElb = posToTargetDeg(clamp(szNorm*0.55 + zSig*0.45, -0.5, 0.5), 'elb');
@@ -415,7 +463,7 @@ function processFrame() {
   if (nowMs - _lastArmUpdate >= ARM_MIN_MS) {
     _lastArmUpdate = nowMs;
     batchTargets({
-      sho:  clamp(fSho,  -visionCap('sho'),  visionCap('sho')),
+      sho:  stabilizeVisionTarget('sho', clamp(fSho, -visionCap('sho'), visionCap('sho'))),
       elb:  clamp(fElb,  -visionCap('elb'),  visionCap('elb')),
       wri:  clamp(fWri,  -visionCap('wri'),  visionCap('wri')),
       grip: clamp(fGrip, -visionCap('grip'), visionCap('grip')),
@@ -752,24 +800,26 @@ async function startCam() {
     /* 2. Activar UI y drawLoop ANTES de inicializar MediaPipe */
     camActive = true;
     window.__camOn = true;    // bloquea BASE (shared.js la ignora en visión)
-    _ui('cam-mode-lbl', 'CARGANDO IA…');
+    _ui('cam-mode-lbl', 'INICIANDO…');
     document.getElementById('cam-overlay').style.display    = 'flex';
     document.getElementById('signal-bar').style.display     = 'flex';
     document.getElementById('amp-hud').style.display        = 'flex';
     document.getElementById('st-cam').className             = 'chip on';
     document.getElementById('btn-mirror').disabled          = false;
     document.getElementById('btn-mirror').style.opacity     = '1';
-    document.getElementById('ft-mode').textContent          = 'Modo: Control por Mano';
+    document.getElementById('ft-mode').textContent          = 'Vista: Seguimiento por mano';
     btnStart.style.display                                   = 'none';
     document.getElementById('btn-cam-stop').style.display   = 'block';
     document.getElementById('btn-overlay-stop').style.display = 'inline-flex';
-    log('Cámara conectada — iniciando IA…', 'ok');
+    log('Cámara activada — iniciando seguimiento…', 'ok');
 
     /* Resetear filtros al objetivo actual (evita saltos al iniciar) */
+    setJointTarget('sho', J.sho.target);
     JDEFS.forEach(d=>{ F[d.key].e1=F[d.key].e2=J[d.key].target; });
+    if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
     lockBaseToKeyboardOnly();
     setBaseUiLock(true);
-    log('Base CH4 bloqueada en visión — control solo con Q/A', 'info');
+    log('Base reservada al teclado en este modo — usa Q/A', 'info');
 
     /* Iniciar draw loop rAF — el video es visible desde AQUÍ */
     _frameCount=0; _fpsFrames=0; _fpsLast=performance.now();
@@ -782,7 +832,7 @@ async function startCam() {
     _initMediaPipe();
 
   } catch(err) {
-    btnStart.textContent   = '▶ Iniciar cámara';
+    btnStart.textContent   = '▶ Activar cámara';
     btnStart.disabled      = false;
     btnStart.style.display = 'block';
     document.getElementById('btn-cam-stop').style.display     = 'none';
@@ -791,11 +841,11 @@ async function startCam() {
     camActive = false;
     window.__camOn = false;
     log('Error: ' + err.message, 'err');
-    modal('Error al acceder a la cámara',
-      'No se pudo iniciar la webcam.\n\n' +
-      '• Verifica los permisos en el navegador (🔒 en la barra de dirección)\n' +
-      '• La cámara puede estar en uso por otra aplicación\n' +
-      '• La página debe servirse por HTTPS o localhost\n\n' + err.message);
+    modal('No se pudo activar la cámara',
+      'La cámara no pudo iniciarse en este momento.\n\n' +
+      '• Verifica los permisos del navegador\n' +
+      '• Comprueba si la cámara está siendo utilizada por otra aplicación\n' +
+      '• Asegúrate de abrir la página desde HTTPS o localhost\n\n' + err.message);
   }
 }
 
@@ -805,7 +855,7 @@ async function _initMediaPipe() {
   const haveHands = typeof Hands !== 'undefined';
   if (!havePose && !haveHands) {
     log('MediaPipe no disponible', 'err');
-    _ui('cam-mode-lbl', 'SIN IA');
+    _ui('cam-mode-lbl', 'NO DISP.');
     return;
   }
 
@@ -824,8 +874,8 @@ async function _initMediaPipe() {
       await poseInst.initialize();
       if (!camActive) return;
       mpReady = true;
-      _ui('cam-mode-lbl', 'BRAZO COMPLETO');
-      log('MediaPipe Pose listo ✓', 'ok');
+      _ui('cam-mode-lbl', 'SEGUIMIENTO');
+      log('Seguimiento corporal listo ✓', 'ok');
     } catch(e) {
       log('Error Pose: ' + e.message, 'err');
     }
@@ -846,16 +896,18 @@ async function _initMediaPipe() {
       if (!camActive) return;
       handsReady = true;
       document.getElementById('st-hand').className = 'chip on';
-      log('MediaPipe Hands listo ✓', 'ok');
+      log('Seguimiento de mano listo ✓', 'ok');
     } catch(e) {
       log('Error Hands: ' + e.message, 'err');
     }
   }
 
-  if (!mpReady && !handsReady) _ui('cam-mode-lbl', 'ERROR IA');
+  if (!mpReady && !handsReady) _ui('cam-mode-lbl', 'ERROR');
 }
 
 /* ─── Parar cámara ───────────────────────────────────────────── */
+/* Restablece el modo manual por completo: libera MediaPipe, apaga el
+   stream y devuelve la UI a un estado neutro. */
 function stopCam() {
   camActive = false;
   window.__camOn = false;   // desbloquea BASE
@@ -863,8 +915,11 @@ function stopCam() {
   handsReady= false;
   _armFrozen= false;
   setBaseUiLock(false);
+  if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
   latestHand= null;
+  latestHandRaw = null;
   latestPose2D    = null;
+  latestPose2DRaw = null;
   latestPoseWorld = null;
 
   if (_rafId) { cancelAnimationFrame(_rafId); _rafId=null; }
@@ -882,32 +937,39 @@ function stopCam() {
   ['st-cam','st-hand'].forEach(id=>document.getElementById(id).className='chip');
 
   const bs=document.getElementById('btn-cam-start');
-  bs.textContent='▶ Iniciar cámara'; bs.disabled=false; bs.style.display='block';
+  bs.textContent='▶ Activar cámara'; bs.disabled=false; bs.style.display='block';
   document.getElementById('btn-cam-stop').style.display    = 'none';
   document.getElementById('btn-overlay-stop').style.display = 'none';
   document.getElementById('btn-mirror').disabled = true;
   document.getElementById('btn-mirror').style.opacity = '.4';
-  document.getElementById('ft-mode').textContent = 'Modo: Manual';
+  document.getElementById('ft-mode').textContent = 'Vista: Control';
   log('Cámara detenida', 'info');
 }
 
 /* ─── Listeners de controles ─────────────────────────────────── */
+// Botones principales del panel de visión.
 document.getElementById('btn-cam-start').addEventListener('click', startCam);
 document.getElementById('btn-cam-stop').addEventListener('click', stopCam);
 document.getElementById('btn-overlay-stop').addEventListener('click', stopCam);
 
 document.getElementById('btn-mirror').addEventListener('click', function(){
-  mirrorOn=!mirrorOn; this.textContent=mirrorOn?'⇔ Espejo: ON':'⇔ Espejo';
+  mirrorOn = !mirrorOn;
+  syncVisionMirrorState();
+  updateMirrorButton();
 });
 
+// Sensibilidades y filtros se aplican en vivo para afinar el seguimiento.
 document.getElementById('sl-sens-x').addEventListener('input',function(){ SENS_X=parseFloat(this.value); _ui('lv-sens-x',SENS_X+'°'); });
 document.getElementById('sl-sens-y').addEventListener('input',function(){ SENS_Y=parseFloat(this.value); _ui('lv-sens-y',SENS_Y+'°'); });
 document.getElementById('sl-sens-z').addEventListener('input',function(){ SENS_Z=parseFloat(this.value); _ui('lv-sens-z',SENS_Z+'°'); });
 document.getElementById('sl-smooth').addEventListener('input',function(){ ALPHA2=parseFloat(this.value); _ui('lv-smooth',ALPHA2.toFixed(2)); });
 document.getElementById('sl-smooth2').addEventListener('input',function(){ ALPHA1=parseFloat(this.value); _ui('lv-smooth2',ALPHA1.toFixed(2)); });
 disableVisionBaseControls();
+updateMirrorButton();
 
 /* ══════════════════════════════════ OVERLAY ARRASTRABLE ══════════════════════════════════ */
+/* El overlay puede anclarse a esquinas o moverse libremente sin afectar
+   el pipeline de visión, porque solo manipula estilos del contenedor. */
 (function(){
   const ov=document.getElementById('cam-overlay');
   const hdr=document.getElementById('cam-hdr');

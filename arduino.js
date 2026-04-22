@@ -22,6 +22,7 @@
    ══════════════════════════════════════════════ */
 const CHAN_DEFAULTS = { base:4, sho:3, elb:2, wri:1, grip:0 };
 const CHAN_KEY      = 'roboarm-channels-v4';
+const totalRangeLabel = deg => `${deg * 2}° totales`;
 
 // Cargar configuración guardada o usar defaults
 let chanMap = { ...CHAN_DEFAULTS };
@@ -39,11 +40,11 @@ try {
 
 /* ── Meta-info de cada servo (para firmware y telemetría) ───── */
 const SERVO_META = {
-  base: { label:'Base',   varName:'CH_BASE',     min:-90, max:90, offset:0, centered:true,  range:'180° totales' },
-  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:-45, max:45, offset:0, centered:true,  range:'90° totales'  },
-  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:-30, max:30, offset:0, centered:true,  range:'60° totales'  },
-  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:-90, max:90, offset:0, centered:true,  range:'180° totales' },
-  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:-30, max:30, offset:0, centered:true,  range:'60° totales'  },
+  base: { label:'Base',   varName:'CH_BASE',     min:-PHYSICAL_LIMITS.base, max:PHYSICAL_LIMITS.base, offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.base) },
+  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:-PHYSICAL_LIMITS.sho,  max:PHYSICAL_LIMITS.sho,  offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.sho)  },
+  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:-PHYSICAL_LIMITS.elb,  max:PHYSICAL_LIMITS.elb,  offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.elb)  },
+  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:-PHYSICAL_LIMITS.wri,  max:PHYSICAL_LIMITS.wri,  offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.wri)  },
+  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:-PHYSICAL_LIMITS.grip, max:PHYSICAL_LIMITS.grip, offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.grip) },
 };
 
 /* ══════════════════════════════════════════════
@@ -96,15 +97,34 @@ function stopNeuRefresh() {
 
 const PULSE_HARD_MIN = 130;
 const PULSE_HARD_MAX = 490;
+// Refuerzo direccional interno del hombro. No se expone en la UI.
+// En este montaje, hombro negativo = elevar/subir.
+const SHOULDER_LIFT_SIGN = -1;
+const SHOULDER_UP_DELTA_BOOST = 18;
+const SHOULDER_DOWN_DELTA_BOOST = 0;
+// Reducir discretamente la fuerza base en los servos que no cargan el peso principal.
+const SERVO_FORCE_TRIM = { base:-4, sho:0, elb:0, wri:-4, grip:-4 };
+
+function isShoulderLiftCommand(secs) {
+  return Math.sign(secs) === SHOULDER_LIFT_SIGN;
+}
 
 function speedDpsToPulseDelta(dps) {
   const t = (clamp(dps, MIN_SPEED_DPS, MAX_SPEED_DPS) - MIN_SPEED_DPS) / (MAX_SPEED_DPS - MIN_SPEED_DPS || 1);
   return Math.round(12 + t * 26);
 }
 
+function pulseDeltaForCommand(key, secs, dps = speedDps) {
+  let delta = speedDpsToPulseDelta(dps) + (SERVO_FORCE_TRIM[key] || 0);
+  if (key === 'sho') {
+    delta += isShoulderLiftCommand(secs) ? SHOULDER_UP_DELTA_BOOST : SHOULDER_DOWN_DELTA_BOOST;
+  }
+  return Math.max(0, delta);
+}
+
 function velPWM(secs, key) {
   if (Math.abs(secs) < 0.0005) return (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
-  const delta = speedDpsToPulseDelta(speedDps);
+  const delta = pulseDeltaForCommand(key, secs, speedDps);
   const neutral = (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
   return secs > 0
     ? clamp(neutral + delta, PULSE_HARD_MIN, PULSE_HARD_MAX)
@@ -149,6 +169,8 @@ ${chanComment}
 //
 //  Protocolo RX: "B:90,H:90,C:20,W:90,G:0\\n"
 //  Protocolo TX: "OK B:90 H:90 C:20 W:90 G:0\\n"
+//  Arranque seguro: sin señal a los servos hasta recibir
+//  el primer comando válido desde la página web.
 // ═══════════════════════════════════════════
 
 #include <Wire.h>
@@ -164,6 +186,14 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 #define SPEED_DELTA_MIN    12      // muy lento
 #define SPEED_DELTA_MAX    38      // rápido pero aún controlable
 #define SPEED_DELTA_DEFAULT ${speedDpsToPulseDelta(speedDps)}
+#define BASE_DELTA_TRIM ${SERVO_FORCE_TRIM.base}
+#define SHOULDER_DELTA_TRIM ${SERVO_FORCE_TRIM.sho}
+#define ELBOW_DELTA_TRIM ${SERVO_FORCE_TRIM.elb}
+#define WRIST_DELTA_TRIM ${SERVO_FORCE_TRIM.wri}
+#define GRIP_DELTA_TRIM ${SERVO_FORCE_TRIM.grip}
+#define SHOULDER_LIFT_SIGN ${SHOULDER_LIFT_SIGN}
+#define SHOULDER_UP_DELTA_BOOST ${SHOULDER_UP_DELTA_BOOST}
+#define SHOULDER_DOWN_DELTA_BOOST ${SHOULDER_DOWN_DELTA_BOOST}
 
 // ── Asignación de canales PCA9685 ────────────────────────────
 ${defineLines}
@@ -183,12 +213,20 @@ unsigned long _lastAtPos = 0;   // throttle de AT_POS (evita inundar el PC)
 // ── Trim neutral por servo (PWM exacto para que el servo no derive)
 // Editable en caliente con "NEU:b,h,c,w,g"
 uint16_t neu[5] = { ${neutrals.base}, ${neutrals.sho}, ${neutrals.elb}, ${neutrals.wri}, ${neutrals.grip} };
+int8_t deltaTrim[5] = { BASE_DELTA_TRIM, SHOULDER_DELTA_TRIM, ELBOW_DELTA_TRIM, WRIST_DELTA_TRIM, GRIP_DELTA_TRIM };
 uint8_t speedDelta = SPEED_DELTA_DEFAULT;
+bool outputsEnabled = false;
 
 // ── PWM según dirección: neutral exacto por servo = parado ────
 uint16_t dirPWM(uint8_t i, int d) {
-  if (d > 0) return constrain((int)neu[i] + speedDelta, PULSE_HARD_MIN, PULSE_HARD_MAX);
-  if (d < 0) return constrain((int)neu[i] - speedDelta, PULSE_HARD_MIN, PULSE_HARD_MAX);
+  int delta = (int)speedDelta + (int)deltaTrim[i];
+  if (i == 1) {
+    if (d == SHOULDER_LIFT_SIGN) delta += SHOULDER_UP_DELTA_BOOST;
+    else if (d == -SHOULDER_LIFT_SIGN) delta += SHOULDER_DOWN_DELTA_BOOST;
+  }
+  delta = max(0, delta);
+  if (d > 0) return constrain((int)neu[i] + delta, PULSE_HARD_MIN, PULSE_HARD_MAX);
+  if (d < 0) return constrain((int)neu[i] - delta, PULSE_HARD_MIN, PULSE_HARD_MAX);
   return neu[i];
 }
 
@@ -198,11 +236,22 @@ void setSpeedProfile(float dps) {
   speedDelta = (uint8_t)roundf(SPEED_DELTA_MIN + t * (SPEED_DELTA_MAX - SPEED_DELTA_MIN));
 }
 
+void disableServoSignals() {
+  for (uint8_t i = 0; i < 5; i++)
+    pwm.setPWM(CH_IDX[i], 0, 4096);
+}
+
+void armOutputs() {
+  if (outputsEnabled) return;
+  outputsEnabled = true;
+}
+
 // ── Aplica estado actual a todos los canales ──────────────────
 // Cuando d=0: envía el pulso neutro calibrado (≈1500 µs ajustable).
 // Es crítico que cada servo tenga su neu[] bien ajustado — si no,
 // el servo continuo derivará lentamente.
 void applyServos() {
+  if (!outputsEnabled) return;
   for (uint8_t i = 0; i < 5; i++)
     pwm.setPWM(CH_IDX[i], 0, dirPWM(i, sv[i].d));
 }
@@ -225,6 +274,7 @@ void parseCmd(String cmd) {
 
   if (cmd == "HOME") {
     for (uint8_t i = 0; i < 5; i++) { sv[i].t = 0; sv[i].d = 0; }
+    armOutputs();
     applyServos();
     Serial.println("OK HOME");
     return;
@@ -232,6 +282,7 @@ void parseCmd(String cmd) {
 
   if (cmd.startsWith("SPD:")) {
     setSpeedProfile(cmd.substring(4).toFloat());
+    armOutputs();
     applyServos();
     Serial.print("OK SPD ");
     Serial.println(speedDelta);
@@ -248,6 +299,7 @@ void parseCmd(String cmd) {
       if (v >= 260 && v <= 360) neu[idx] = (uint16_t)v;
       s2 = cm + 1; idx++;
     }
+    armOutputs();
     applyServos();
     Serial.print("OK NEU");
     for (uint8_t i = 0; i < 5; i++) { Serial.print(' '); Serial.print(neu[i]); }
@@ -256,6 +308,7 @@ void parseCmd(String cmd) {
   }
 
   int s = 0;
+  bool hasMotionCmd = false;
   while (s < (int)cmd.length()) {
     int cm = cmd.indexOf(',', s); if (cm < 0) cm = cmd.length();
     String tok = cmd.substring(s, cm);
@@ -263,14 +316,18 @@ void parseCmd(String cmd) {
     if (col > 0) {
       float v = constrain(tok.substring(col + 1).toFloat(), -10.0f, 10.0f);
       switch (tok.charAt(0)) {
-        case 'B': setServo(0, v); break;
-        case 'H': setServo(1, v); break;
-        case 'C': setServo(2, v); break;
-        case 'W': setServo(3, v); break;
-        case 'G': setServo(4, v); break;
+        case 'B': setServo(0, v); hasMotionCmd = true; break;
+        case 'H': setServo(1, v); hasMotionCmd = true; break;
+        case 'C': setServo(2, v); hasMotionCmd = true; break;
+        case 'W': setServo(3, v); hasMotionCmd = true; break;
+        case 'G': setServo(4, v); hasMotionCmd = true; break;
       }
     }
     s = cm + 1;
+  }
+  if (hasMotionCmd) {
+    armOutputs();
+    applyServos();
   }
 }
 
@@ -282,7 +339,7 @@ void setup() {
   pwm.setOscillatorFrequency(27000000);
   pwm.setPWMFreq(SERVO_FREQ);
   delay(10);
-  applyServos();  // todos en neutral al arrancar
+  disableServoSignals();  // arranque mudo hasta la primera orden web
   _lastTick = millis();
   Serial.println("READY IPN-RoboArm v4.0");
 }
@@ -433,6 +490,7 @@ let _uploadAfterReady=false; // flag: subir firmware al recibir READY
 let _serverAvail=false;      // servidor arduino-cli disponible
 let _uploadInFlight=false;   // evita subidas duplicadas / carreras
 let _ignoreHotplugDuringUpload=false; // ignora hotplug mientras se flashea
+let _reconnectAfterUploadTimer=null;  // reintentos tras subir firmware
 let _idleSyncInFlight=null;  // secuencia de reposo seguro tras READY/PONG
 const _rxWaiters = [];
 const READY_TIMEOUT_MS = 1200;
@@ -457,23 +515,23 @@ function _readyFallback() {
   clearTimeout(_pingTimer);
   _readyTimer = setTimeout(() => {
     if (!port) return;
-    log('Sin READY — verificando firmware con PING…', 'info');
+    log('Sin confirmación inicial — verificando la comunicación del equipo…', 'info');
     sendRaw('PING');
     // Si no llega PONG pronto → el firmware no es el correcto
     _pingTimer = setTimeout(() => {
       if (port && !serialT) {
         if (_uploadAfterReady) {
           if (_serverAvail) {
-            log('⚠ Arduino sin firmware IPN — subiendo porque lo pediste', 'info');
-            slog('⚠ Sin respuesta al protocolo — lanzando upload solicitado', 's-sy');
+            log('Se detectó una configuración distinta — iniciando la carga solicitada', 'info');
+            slog('Sin respuesta inicial — iniciando la carga solicitada', 's-sy');
             uploadFirmware();
           } else {
-            log('⚠ Firmware no reconocido — abre start-server.bat para subirlo', 'err');
-            slog('⚠ Inicia start-server.bat (doble clic) para habilitar la subida', 's-er');
+            log('No se reconoció la configuración actual — abre start-server.bat para habilitar la carga', 'err');
+            slog('Inicia start-server.bat para habilitar la carga desde la plataforma', 's-er');
           }
         } else {
-          log('⚠ Firmware no reconocido — no se subirá hasta que lo pidas', 'err');
-          slog('⚠ Usa "⬆ Subir al Arduino" si quieres cargar el firmware IPN', 's-er');
+          log('Se detectó una configuración diferente — no se reemplazará hasta que lo solicites', 'err');
+          slog('Usa "⬆ Cargar al equipo" si deseas instalar la configuración recomendada', 's-er');
         }
       }
     }, PING_TIMEOUT_MS);
@@ -506,9 +564,11 @@ async function _safeOpenPort(p) {
 }
 
 /* ── Conectar directamente a un puerto ya autorizado ─────────────────── */
-// skipUpload=true solo cuando se llama desde uploadFirmware() tras flashear
-async function autoConnectPort(serialPort, skipUpload = false) {
+// `opts.suppressFallback` evita el READY/PING agresivo cuando estamos
+// validando una reconexión automática después de flashear.
+async function autoConnectPort(serialPort, opts = false) {
   if (port) return;
+  const suppressFallback = !!(opts && typeof opts === 'object' && opts.suppressFallback);
   try {
     port = serialPort;
     await _safeOpenPort(port);
@@ -524,8 +584,8 @@ async function autoConnectPort(serialPort, skipUpload = false) {
     // Conectar sin forzar subida: la carga del firmware solo ocurre si el
     // usuario la pidió explícitamente.
     slog('Puerto abierto @ 115200 baud — esperando READY…');
-    _readyFallback();
     startReader();
+    if (!suppressFallback) _readyFallback();
   } catch(e) {
     port = null;
     log('Error al conectar: ' + e.message, 'err');
@@ -755,13 +815,25 @@ async function ensureSafeIdle(source = 'serial') {
    temporizador antes de que venciera el anterior → servo corría
    en continuo). */
 const MIN_TX_MS = 40;
+// Durante el sostén re-enviamos antes de que venza el pulso para que sea continuo.
+const HOLD_TX_MS = 45;
 
 function sendPos() {
   const now = performance.now();
   if (now - _lastSendMs < MIN_TX_MS) return;
 
   const cmd = buildCmd();
-  if (cmd === _lastSentCmd) return;   // solo envía si cambió
+  const holdTxMs =
+    typeof currentContinuousHoldResendMs === 'function'
+      ? (currentContinuousHoldResendMs() ?? HOLD_TX_MS)
+      : HOLD_TX_MS;
+  const keepHoldAlive =
+    typeof hasContinuousHoldAssist === 'function'
+      ? hasContinuousHoldAssist()
+      : (typeof hasActiveHoldAssist === 'function' && hasActiveHoldAssist());
+  if (cmd === _lastSentCmd) {
+    if (!keepHoldAlive || now - _lastSendMs < holdTxMs) return;
+  }
 
   _lastSentCmd = cmd;
   _lastSendMs  = now;
@@ -835,27 +907,29 @@ async function startReader() {
           clearTimeout(_pingTimer);
           if (!serialT) {
             clearInterval(serialT);
+            log('Configuración verificada ✓ — sincronizando la plataforma…', 'info');
             await ensureSafeIdle('PONG');
-            log('Firmware IPN-RoboArm verificado \u2713 — listo, mueve un servo para comenzar', 'ok');
+            log('Todo listo: ya puedes operar el equipo o activar la cámara', 'ok');
           }
         }
         if (line.startsWith('READY')) {
           clearTimeout(_readyTimer);
           clearTimeout(_pingTimer);
           if (!line.includes('IPN-RoboArm')) {
-            log('\u26a0 Firmware distinto detectado', 'err');
-            slog('\u26a0 Firmware no-IPN detectado (' + line + ')', 's-er');
+            log('Se detectó una configuración diferente', 'err');
+            slog('Configuración distinta detectada (' + line + ')', 's-er');
             if (_uploadAfterReady) {
               if (_serverAvail) { uploadFirmware(); }
-              else { slog('\u26a0 Abre start-server.bat para subir el firmware', 's-er'); }
+              else { slog('Abre start-server.bat para habilitar la carga', 's-er'); }
             } else {
-              slog('\u26a0 Usa "⬆ Subir al Arduino" si quieres reemplazar ese firmware', 's-er');
+              slog('Usa "⬆ Cargar al equipo" si deseas reemplazar esta configuración', 's-er');
             }
             return;
           }
-          log('Arduino listo: ' + line, 'ok');
+          log('Equipo conectado correctamente', 'ok');
+          log('Sincronizando datos iniciales desde la plataforma…', 'info');
           await ensureSafeIdle('READY');
-          log('Listo \u2014 mueve un servo o activa la c\u00e1mara para comenzar', 'ok');
+          log('Todo listo: ya puedes operar el equipo o activar la cámara', 'ok');
           if (_uploadAfterReady) { _uploadAfterReady = false; uploadFirmware(); }
         }
       }
@@ -866,8 +940,8 @@ async function startReader() {
 /* ── Conectar (con diálogo de selección de puerto) ──────────────────── */
 async function connectSerial() {
   if (!('serial' in navigator)) {
-    modal('Web Serial no disponible',
-      'Requiere Chrome o Edge ≥ 89.\nLa página debe servirse por HTTPS o localhost.\nNo compatible con Firefox ni Safari.');
+      modal('Conexión USB no disponible',
+        'Esta función requiere Chrome o Edge versión 89 o superior.\nLa página debe abrirse desde HTTPS o localhost.\nNo está disponible en Firefox ni Safari.');
     return;
   }
   try {
@@ -881,9 +955,9 @@ async function connectSerial() {
     if (pn) pn.textContent = info.usbProductId
       ? `USB 0x${info.usbProductId.toString(16).toUpperCase()}` : 'USB Serial';
     const st = document.getElementById('serial-txt');
-    if (st) st.textContent = 'Conectado @ 115200 baud';
-    slog('Puerto abierto @ 115200 baud — esperando READY…');
-    log('Serial conectado', 'ok');
+    if (st) st.textContent = 'Conectado a 115200 baud';
+    slog('Puerto abierto — esperando confirmación del equipo…');
+    log('Conexión USB establecida', 'ok');
     setConnStatus(true);   // Botón cambia a "Desconectar" inmediatamente
     // No subir firmware automáticamente al conectar.
     _readyFallback();
@@ -905,6 +979,7 @@ function _withTimeout(pr, ms) {
 }
 
 async function disconnectSerial() {
+  clearTimeout(_reconnectAfterUploadTimer); _reconnectAfterUploadTimer = null;
   clearInterval(serialT); serialT = null;
   clearTimeout(_readyTimer); _readyTimer = null;
   clearTimeout(_pingTimer);  _pingTimer  = null;
@@ -1019,8 +1094,8 @@ function updateUploadUI() {
     tabBtn.disabled  = false;
     tabBtn.style.opacity = '1';
     tabBtn.title = _serverAvail
-      ? 'Subir firmware al Arduino via arduino-cli (servidor OK)'
-      : 'Haz clic para ver cómo iniciar el servidor de compilación';
+      ? 'Cargar la configuración al equipo con el servicio local disponible'
+      : 'Haz clic para ver cómo habilitar la carga automática';
   }
   // El botón de descarga siempre está disponible
   const dlBtn = document.getElementById('btn-dl-fw');
@@ -1029,13 +1104,13 @@ function updateUploadUI() {
 
 /** Muestra al usuario cómo iniciar el servidor de compilación. */
 function showServerHelp() {
-  modal('Activa la subida automática desde el navegador',
-    'Para subir el firmware al Arduino sin descargar nada, hace falta un\n' +
-    'pequeño servidor local que compile el código con arduino-cli.\n\n' +
-    '1) Haz doble clic en start-server.bat (está en la carpeta del proyecto).\n' +
-    '2) Se abrirá una ventana negra — déjala abierta.\n' +
-    '3) Vuelve aquí y pulsa "⬆ Subir al Arduino" de nuevo.\n\n' +
-    'Requisitos una sola vez:\n' +
+  modal('Activa la carga automática desde la plataforma',
+    'Para cargar la configuración del controlador sin salir de esta plataforma,\n' +
+    'necesitas iniciar el servicio local de apoyo.\n\n' +
+    '1) Haz doble clic en start-server.bat dentro de la carpeta del proyecto.\n' +
+    '2) Se abrirá una ventana de apoyo; déjala abierta.\n' +
+    '3) Regresa aquí y pulsa "⬆ Cargar al equipo" nuevamente.\n\n' +
+    'Requisitos iniciales:\n' +
     '• Node.js:       https://nodejs.org\n' +
     '• arduino-cli:  winget install ArduinoSA.CLI\n' +
     '                arduino-cli core install arduino:avr');
@@ -1078,38 +1153,94 @@ async function uploadViaServer(inoSource, boardInfo = null, note = '') {
   return d;
 }
 
-function scheduleReconnectAfterUpload() {
+function _serialPortIdentity(serialPort) {
+  try { return serialPort?.getInfo?.() || null; } catch { return null; }
+}
+
+function _serialPortScore(serialPort, preferredInfo = null) {
+  const info = _serialPortIdentity(serialPort);
+  if (!info) return 0;
+  let score = 0;
+  if (preferredInfo?.usbVendorId && info.usbVendorId === preferredInfo.usbVendorId) score += 20;
+  if (preferredInfo?.usbProductId && info.usbProductId === preferredInfo.usbProductId) score += 50;
+  return score;
+}
+
+function _sortPortsForReconnect(ports, preferredPort = null) {
+  const preferredInfo = _serialPortIdentity(preferredPort) || preferredPort || null;
+  return [...ports].sort((a, b) => _serialPortScore(b, preferredInfo) - _serialPortScore(a, preferredInfo));
+}
+
+function _isReadyFirmwareLine(line) {
+  const txt = String(line || '');
+  return txt === 'PONG' || (txt.startsWith('READY') && txt.includes('IPN-RoboArm'));
+}
+
+async function waitForReadyFirmware(timeoutMs = 900) {
+  if (serialT || _idleSyncInFlight) return 'ACTIVE';
+  try {
+    return await waitSerialLine(_isReadyFirmwareLine, timeoutMs);
+  } catch {
+    return null;
+  }
+}
+
+async function probeCurrentFirmwareHandshake({
+  initialWaitMs = 2200,
+  pingAttempts = 4,
+  perPingTimeoutMs = 900,
+} = {}) {
+  let hello = await waitForReadyFirmware(initialWaitMs);
+  if (hello) return hello;
+
+  for (let i = 0; i < pingAttempts; i++) {
+    if (!port || !writer) break;
+    try { await sendRaw('PING'); } catch {}
+    hello = await waitForReadyFirmware(perPingTimeoutMs);
+    if (hello) return hello;
+    await _sleepMs(220);
+  }
+  return null;
+}
+
+function scheduleReconnectAfterUpload(preferredPort = null) {
+  clearTimeout(_reconnectAfterUploadTimer);
   const reconnect = async (attempt = 0) => {
     if (attempt >= 5 || port || _uploadInFlight) return;
     try {
-      const ports = await navigator.serial.getPorts();
-      if (ports.length > 0 && !port) {
-        await autoConnectPort(ports[0], true); // true = no re-flashear
-        if (port) return;
+      const authorized = await navigator.serial.getPorts();
+      const ports = _sortPortsForReconnect(authorized, preferredPort);
+      for (const candidate of ports) {
+        if (port || _uploadInFlight) return;
+        await autoConnectPort(candidate, { suppressFallback: true });
+        const hello = await probeCurrentFirmwareHandshake();
+        if (hello) return;
+        if (port && !serialT) await disconnectSerial();
+        await _sleepMs(300);
       }
     } catch (e) {
       slog('Reintento conexión ' + (attempt + 1) + ': ' + e.message, 's-er');
     }
-    setTimeout(() => reconnect(attempt + 1), 800 + attempt * 400);
+    _reconnectAfterUploadTimer = setTimeout(() => reconnect(attempt + 1), 1100 + attempt * 500);
   };
-  setTimeout(() => reconnect(0), 2500);
+  _reconnectAfterUploadTimer = setTimeout(() => reconnect(0), 3200);
 }
 
 document.getElementById('btn-dl-fw').addEventListener('click', () => {
   const code = document.getElementById('fw').textContent;
-  if (!code.trim()) { log('Genera el firmware primero', 'err'); return; }
+  if (!code.trim()) { log('Primero genera el archivo de configuración', 'err'); return; }
   const blob = new Blob([code], { type: 'text/plain' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'roboarm_fw.ino';
   a.click();
   URL.revokeObjectURL(a.href);
-  log('roboarm_fw.ino descargado — ábrelo en Arduino IDE y súbelo', 'ok');
+  log('Archivo descargado correctamente — ya puedes cargarlo desde Arduino IDE', 'ok');
 });
 
 async function uploadFirmware() {
   if (_uploadInFlight) {
-    log('Ya hay una subida en curso — espera a que termine', 'info');
+    log('Ya hay una carga en proceso — espera a que finalice', 'info');
     return;
   }
   if (!_serverAvail) {
@@ -1117,7 +1248,7 @@ async function uploadFirmware() {
     await checkServer();
     if (!_serverAvail) {
       showServerHelp();
-      log('Inicia start-server.bat y reintenta la subida', 'err');
+      log('Inicia start-server.bat y vuelve a intentar la carga', 'err');
       return;
     }
   }
@@ -1141,7 +1272,7 @@ async function uploadFirmware() {
     if (ports.length === 0) {
       _uploadInFlight = false;
       _ignoreHotplugDuringUpload = false;
-      log('No hay Arduino autorizado — pulsa ⚡ Conectar primero', 'err');
+      log('Aún no hay un equipo autorizado — pulsa ⚡ Conectar primero', 'err');
       return;
     }
     flashPort = ports[0];
@@ -1154,13 +1285,13 @@ async function uploadFirmware() {
 
     if (useServerDirect) {
       const boardLbl = boardInfo?.name || boardInfo?.board || 'placa detectada';
-      log(`Placa detectada: ${boardLbl} — usando arduino-cli`, 'info');
-      slog(`↺ Placa detectada: ${boardLbl} — subiendo con arduino-cli`, 's-sy');
+      log(`Equipo detectado: ${boardLbl} — usando carga asistida`, 'info');
+      slog(`Equipo detectado: ${boardLbl} — iniciando carga asistida`, 's-sy');
       await uploadViaServer(inoSource, boardInfo);
     } else {
       // 1. Compilar firmware en el servidor
-      log('Compilando firmware…', 'info');
-      slog('⬆ Compilando con arduino-cli…', 's-sy');
+      log('Preparando archivo de control…', 'info');
+      slog('Preparando archivo con arduino-cli…', 's-sy');
       let hex;
       try {
         const r = await fetch('http://localhost:8080/compile', {
@@ -1171,16 +1302,16 @@ async function uploadFirmware() {
         });
         const d = await r.json();
         if (!d.ok) {
-          log('Error compilando: ' + (d.error || 'ver consola del servidor'), 'err');
-          slog('✗ Compilación fallida: ' + (d.error || d.output || '').slice(0, 200), 's-er');
+          log('No fue posible preparar el archivo: ' + (d.error || 'revisa la consola del servidor'), 'err');
+          slog('Preparación fallida: ' + (d.error || d.output || '').slice(0, 200), 's-er');
           return;
         }
         hex = d.hex;
-        log('Compilación OK — subiendo al Arduino…', 'ok');
+        log('Archivo listo — cargando en el equipo…', 'ok');
         slog('✓ Compilado — subiendo por USB (STK500)…', 's-sy');
       } catch(e) {
         log('Sin respuesta del servidor: ' + e.message, 'err');
-        slog('✗ Timeout/error en /compile — reintenta tras iniciar start-server.bat', 's-er');
+        slog('No se pudo preparar el archivo — reintenta después de iniciar start-server.bat', 's-er');
         return;
       }
 
@@ -1192,18 +1323,18 @@ async function uploadFirmware() {
           if (pct < 1) slog('⬆ Subiendo… ' + Math.round(pct * 100) + '%', 's-sy');
         });
       } catch (stkErr) {
-        slog('⚠ STK500 falló — reintentando con arduino-cli…', 's-sy');
-        log('STK500 falló — reintentando con arduino-cli…', 'info');
+        slog('La carga inicial falló — reintentando con arduino-cli…', 's-sy');
+        log('La carga inicial falló — reintentando con arduino-cli…', 'info');
         await uploadViaServer(inoSource, boardInfo);
       }
     }
 
-    log('Firmware subido ✓ — reconectando…', 'ok');
-    slog('✓ Firmware cargado — Arduino reiniciando', 's-ok');
-    scheduleReconnectAfterUpload();
+    log('Configuración cargada correctamente ✓ — reconectando…', 'ok');
+    slog('Configuración aplicada — el equipo se está reiniciando', 's-ok');
+    scheduleReconnectAfterUpload(flashPort);
   } catch(e) {
-    log('Error al subir firmware: ' + e.message, 'err');
-    slog('✗ Upload error: ' + e.message, 's-er');
+    log('Error al cargar la configuración: ' + e.message, 'err');
+    slog('Error durante la carga: ' + e.message, 's-er');
   } finally {
     const pEl = document.getElementById('upload-progress');
     if (pEl) pEl.textContent = '';
@@ -1268,7 +1399,8 @@ document.getElementById('chk-autostart').addEventListener('change', function() {
   log('Auto-inicio: '+(this.checked?'activado':'desactivado'),'info');
 });
 
-// Sliders de prueba individual de servo (ahora en GRADOS objetivo)
+// Sliders espejo del panel Arduino: permiten probar cada canal sin cambiar
+// el modelo mental del resto de la UI, que también trabaja en grados.
 ['base','sho','elb','wri','grip'].forEach(k => {
   const sl = document.getElementById('ard-sl-'+k);
   if (sl) sl.addEventListener('input', function() {
@@ -1348,6 +1480,7 @@ const _uploadBtn = document.getElementById('btn-upload-fw');
 if (_uploadBtn) _uploadBtn.addEventListener('click', uploadFirmware);
 
 // Auto-detección de Arduino (solo hot-plug — no probing síncrono en load)
+// La idea es sugerir conexión sin bloquear el render inicial de la página.
 if ('serial' in navigator) {
   // Al cargar: si hay un puerto autorizado, mostrar banner SIN abrir el puerto
   // (abrir/cerrar probe bloquea el hilo principal varios segundos en Windows)
@@ -1368,7 +1501,7 @@ if ('serial' in navigator) {
     if (_ignoreHotplugDuringUpload) return;
     if (port && e.target === port) {
       disconnectSerial();
-      log('Arduino desconectado', 'err');
+      log('Equipo desconectado', 'err');
     }
   });
 }
@@ -1389,8 +1522,8 @@ checkServer();
 setInterval(checkServer, 10000); // Re-verificar cada 10 s
 
 // Mensajes de bienvenida en consola serial
-slog('RoboArm IPN v4.0 — Sistema listo');
+slog('Plataforma de control lista');
 const chanSummary = ['base','sho','elb','wri','grip']
   .map(k => `CH${chanMap[k]}=${SERVO_META[k].label}`).join('  ');
 slog(chanSummary, 's-sy');
-slog('Haz clic en ⚡ Conectar para seleccionar el puerto USB');
+slog('Haz clic en ⚡ Conectar para seleccionar el equipo por USB');

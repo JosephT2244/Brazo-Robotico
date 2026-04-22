@@ -116,6 +116,8 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
   });
 
   /* Espera STK_INSYNC + STK_OK del bootloader */
+  /* allowNoise=true tolera basura previa del sketch anterior mientras el
+     bootloader termina de tomar control después del reset por DTR. */
   const expect = async (ms = 800, allowNoise = false) => {
     const b0 = await rxByte(ms);
     const b1 = await rxByte(ms);
@@ -178,6 +180,7 @@ async function flashArduino(serialPort, hexString, onProgress = null, pageSize =
     try { await expect(600); } catch { /* OK: Arduino ya reinicia */ }
 
   } finally {
+    // Liberar lector/escritor y cerrar el puerto aunque la subida falle.
     loopActive = false;
     while (rxWait.length) rxWait.shift()(0xFF);
     try { await rdReader.cancel(); } catch { }

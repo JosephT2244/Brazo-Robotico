@@ -22,12 +22,25 @@ const MANUAL_STEP_DEG = 10;
 const DEFAULT_SPEED_DPS = 8;
 const MIN_SPEED_DPS     = 10;
 const MAX_SPEED_DPS     = 18;
+// Apertura física extra solicitada para base, hombro y codo.
+const PHYSICAL_LIMITS = {
+  base: 120,
+  sho:   75,
+  elb:   60,
+  wri:   90,
+  grip:  30,
+};
+// Topes extra cuando la cámara está activa. Se expresan como ±grados
+// alrededor del 0 lógico de cada articulación.
+const VISION_ACTIVE_LIMITS = {
+  sho: 45,  // 90° totales mientras la visión esté encendida
+};
 const JDEFS = [
-  { key:'base', min:-90, max: 90, def:0, lbl:'BASE',   dps: DEFAULT_SPEED_DPS, angLim: 90, maxSecs: 0.18 },
-  { key:'sho',  min:-45, max: 45, def:0, lbl:'HOMBRO', dps: DEFAULT_SPEED_DPS, angLim: 45, maxSecs: 0.18 },
-  { key:'elb',  min:-30, max: 30, def:0, lbl:'CODO',   dps: DEFAULT_SPEED_DPS, angLim: 30, maxSecs: 0.18 },
-  { key:'wri',  min:-90, max: 90, def:0, lbl:'MUÑECA', dps: DEFAULT_SPEED_DPS, angLim: 90, maxSecs: 0.18 },
-  { key:'grip', min:-30, max: 30, def:0, lbl:'PINZA',  dps: DEFAULT_SPEED_DPS, angLim: 30, maxSecs: 0.18 },
+  { key:'base', min:-PHYSICAL_LIMITS.base, max: PHYSICAL_LIMITS.base, def:0, lbl:'BASE',   dps: DEFAULT_SPEED_DPS, angLim: PHYSICAL_LIMITS.base, maxSecs: 0.18 },
+  { key:'sho',  min:-PHYSICAL_LIMITS.sho,  max: PHYSICAL_LIMITS.sho,  def:0, lbl:'HOMBRO', dps: DEFAULT_SPEED_DPS, angLim: PHYSICAL_LIMITS.sho,  maxSecs: 0.18 },
+  { key:'elb',  min:-PHYSICAL_LIMITS.elb,  max: PHYSICAL_LIMITS.elb,  def:0, lbl:'CODO',   dps: DEFAULT_SPEED_DPS, angLim: PHYSICAL_LIMITS.elb,  maxSecs: 0.18 },
+  { key:'wri',  min:-PHYSICAL_LIMITS.wri,  max: PHYSICAL_LIMITS.wri,  def:0, lbl:'MUÑECA', dps: DEFAULT_SPEED_DPS, angLim: PHYSICAL_LIMITS.wri,  maxSecs: 0.18 },
+  { key:'grip', min:-PHYSICAL_LIMITS.grip, max: PHYSICAL_LIMITS.grip, def:0, lbl:'PINZA',  dps: DEFAULT_SPEED_DPS, angLim: PHYSICAL_LIMITS.grip, maxSecs: 0.18 },
 ];
 
 /* ──────────────────────────────────────────────────────────────
@@ -68,6 +81,7 @@ try {
   });
 } catch (e) { /* usar defaults */ }
 
+// Reescala las velocidades calibradas de cada joint según el perfil global.
 function applySpeedProfile(nextDps = speedDps) {
   speedDps = Math.max(MIN_SPEED_DPS, Math.min(MAX_SPEED_DPS, nextDps));
   const scale = speedDps / DEFAULT_SPEED_DPS;
@@ -78,6 +92,7 @@ function applySpeedProfile(nextDps = speedDps) {
 }
 applySpeedProfile(speedDps);
 
+// Persiste la velocidad base medida por articulación para futuras sesiones.
 function saveDps() {
   const data = {};
   JDEFS.forEach(d => { data[d.key] = J[d.key].dpsBase; });
@@ -111,46 +126,91 @@ const _manualQueue   = {};
 const _manualBusy    = {};
 const _manualToken   = {};
 const _manualPlanned = {};
+const HOLD_ASSIST = {
+  // Punto medio: ayuda visible, pero sin sostén continuo para evitar runaway.
+  sho: { activeAboveDeg: 3, liftSign: -1, minSecs: 0.060, maxSecs: 0.090, sessionMs: 2800, keepAlive: true, resendMs: 145, enabledInVision: true, settleTolDeg: 2.3, pulseStepSecs: 0.008 },
+  // Codo: se asume positivo = flexionar/elevar el antebrazo.
+  elb: { activeAboveDeg: 10, liftSign: +1, minSecs: 0.085, maxSecs: 0.125, sessionMs: 9000, keepAlive: true, resendMs: 45, enabledInVision: true },
+};
+const _holdAssistActive = {};
+const _holdAssistUntil  = {};
+const _holdAssistSince  = {};
 
 JDEFS.forEach(d => {
   _manualQueue[d.key]   = [];
   _manualBusy[d.key]    = false;
   _manualToken[d.key]   = 0;
   _manualPlanned[d.key] = d.def;
+  _holdAssistActive[d.key] = false;
+  _holdAssistUntil[d.key]  = 0;
+  _holdAssistSince[d.key]  = 0;
 });
 
 const _sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// Devuelve el perfil de asistencia contra gravedad si aplica a la articulación.
+function getHoldAssistProfile(key) {
+  const profile = HOLD_ASSIST[key];
+  if (!profile || !J[key]) return null;
+  if (window.__camOn && profile.enabledInVision === false) return null;
+  return profile;
+}
+
+// Ajusta la tolerancia de "ya llegué" cuando una articulación usa hold assist.
+function jointSettleTol(key) {
+  return getHoldAssistProfile(key)?.settleTolDeg ?? _POS_TOL;
+}
+
+// Cuantiza la duración del pulso para evitar microcambios inútiles en firmware.
+function snapPulseSecs(secs, stepDeg) {
+  const step = Math.max(0.0005, Math.abs(stepDeg || 0));
+  if (Math.abs(secs) < step) return 0;
+  return Math.sign(secs) * Math.round(Math.abs(secs) / step) * step;
+}
+
+// Límite mínimo efectivo considerando calibración y modo visión.
 function jointMin(key) {
-  return Math.max(-J[key].angLim, J[key].calMin);
+  const baseMin = Math.max(-J[key].angLim, J[key].calMin);
+  const visionCap = window.__camOn ? VISION_ACTIVE_LIMITS[key] : null;
+  if (typeof visionCap !== 'number') return baseMin;
+  return Math.max(baseMin, -Math.min(J[key].angLim, Math.abs(visionCap)));
 }
 
+// Límite máximo efectivo considerando calibración y modo visión.
 function jointMax(key) {
-  return Math.min(J[key].angLim, J[key].calMax);
+  const baseMax = Math.min(J[key].angLim, J[key].calMax);
+  const visionCap = window.__camOn ? VISION_ACTIVE_LIMITS[key] : null;
+  if (typeof visionCap !== 'number') return baseMax;
+  return Math.min(baseMax, Math.min(J[key].angLim, Math.abs(visionCap)));
 }
 
+// Recorta cualquier ángulo al rango operativo realmente permitido.
 function clampJointDeg(key, deg) {
   if (!J[key]) return deg;
   return clamp(deg, jointMin(key), jointMax(key));
 }
 
+// Lee el HOME persistido y lo fuerza al rango válido actual.
 function getJointHome(key) {
   if (!J[key]) return 0;
   return clampJointDeg(key, typeof J[key].home === 'number' ? J[key].home : 0);
 }
 
+// Guarda una nueva referencia HOME, ya normalizada a la malla de pasos.
 function setJointHome(key, deg) {
   if (!J[key]) return 0;
   J[key].home = snapTargetDeg(key, deg);
   return getJointHome(key);
 }
 
+// Entrega la pose HOME completa para serializarla o reutilizarla en bloque.
 function getHomePoseMap() {
   const map = {};
   JDEFS.forEach(d => { map[d.key] = getJointHome(d.key); });
   return map;
 }
 
+// Toma la pose actual estimada como nueva referencia HOME temporal.
 function captureCurrentPoseAsHome() {
   const map = {};
   JDEFS.forEach(d => {
@@ -159,10 +219,12 @@ function captureCurrentPoseAsHome() {
   return map;
 }
 
+// Manda todas las articulaciones a su referencia HOME actual.
 function moveToHomePose() {
   JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
 }
 
+// Redondea un delta manual al tamaño de paso permitido.
 function snapDeltaDeg(deg, stepDeg = ANGLE_STEP_DEG) {
   if (!isFinite(deg) || !deg) return 0;
   const step = Math.max(0.001, Math.abs(stepDeg));
@@ -170,6 +232,7 @@ function snapDeltaDeg(deg, stepDeg = ANGLE_STEP_DEG) {
   return snapped || Math.sign(deg) * step;
 }
 
+// Ajusta un objetivo absoluto al rango y a la rejilla angular del sistema.
 function snapTargetDeg(key, deg, stepDeg = ANGLE_STEP_DEG) {
   if (!J[key]) return deg;
   const clamped = clampJointDeg(key, deg);
@@ -179,21 +242,103 @@ function snapTargetDeg(key, deg, stepDeg = ANGLE_STEP_DEG) {
   return clampJointDeg(key, Math.round(clamped / step) * step);
 }
 
+// Mide cuánto "peso" está sosteniendo la articulación según su elevación.
+function jointRaisedDeg(key) {
+  const profile = getHoldAssistProfile(key);
+  if (!profile || !J[key]) return 0;
+  return Math.max(
+    0,
+    profile.liftSign * J[key].angPos,
+    profile.liftSign * J[key].target,
+  );
+}
+
+// Extiende la ventana temporal en la que se permite mantener empuje extra.
+function armJointHoldAssist(key, now = performance.now()) {
+  const profile = getHoldAssistProfile(key);
+  if (!profile || !J[key]) return;
+  if (_holdAssistUntil[key] < now) _holdAssistSince[key] = now;
+  _holdAssistUntil[key] = now + profile.sessionMs;
+}
+
+// Limpia por completo el estado temporal de asistencia para un joint.
+function clearJointHoldAssist(key) {
+  _holdAssistActive[key] = false;
+  _holdAssistUntil[key] = 0;
+  _holdAssistSince[key] = 0;
+}
+
+// Calcula si el joint necesita un pequeño pulso de sostén y de qué magnitud.
+function jointHoldAssistState(key, now = performance.now()) {
+  const profile = getHoldAssistProfile(key);
+  if (!profile || !J[key]) return { active: false, secs: 0 };
+  if (now >= _holdAssistUntil[key]) return { active: false, secs: 0 };
+  const raisedDeg = jointRaisedDeg(key);
+  if (raisedDeg <= profile.activeAboveDeg) return { active: false, secs: 0 };
+  const span = Math.max(1, J[key].angLim - profile.activeAboveDeg);
+  const loadT = clamp((raisedDeg - profile.activeAboveDeg) / span, 0, 1);
+  const amp = Math.min(
+    PULSE_CAP_S,
+    profile.minSecs + (profile.maxSecs - profile.minSecs) * loadT,
+  );
+  const secs = snapPulseSecs(profile.liftSign * amp, profile.pulseStepSecs);
+  if (Math.abs(secs) < 0.0005) return { active: false, secs: 0 };
+  return { active: true, secs };
+}
+
+function isJointHoldAssistActive(key) {
+  return !!_holdAssistActive[key];
+}
+
+function hasActiveHoldAssist() {
+  return Object.values(_holdAssistActive).some(Boolean);
+}
+
+function hasContinuousHoldAssist() {
+  return Object.keys(_holdAssistActive).some(key => {
+    if (!_holdAssistActive[key]) return false;
+    return !!(getHoldAssistProfile(key)?.keepAlive);
+  });
+}
+
+// Cuando varias articulaciones sostienen carga, usamos el resend más conservador.
+function currentContinuousHoldResendMs() {
+  let resendMs = null;
+  Object.keys(_holdAssistActive).forEach(key => {
+    if (!_holdAssistActive[key]) return;
+    const profile = getHoldAssistProfile(key);
+    if (!profile?.keepAlive) return;
+    const nextMs = Math.max(40, profile.resendMs || 45);
+    resendMs = resendMs == null ? nextMs : Math.max(resendMs, nextMs);
+  });
+  return resendMs;
+}
+
+/* Núcleo del movimiento: traduce targets angulares a pulsos discretos,
+   actualiza la estimación interna y refresca la UI una sola vez por ciclo. */
 function _commitAll() {
   let anyChanged = false;
   JDEFS.forEach(d => {
     const j    = J[d.key];
     const tgt  = clampJointDeg(d.key, j.target);
     const diff = tgt - j.committed;
+    const now  = performance.now();
+    const posTol = jointSettleTol(d.key);
 
-    if (Math.abs(diff) < _POS_TOL) {
-      if (j.v !== 0) { j.v = 0; anyChanged = true; }
+    if (Math.abs(diff) < posTol) {
+      const hold = jointHoldAssistState(d.key, now);
+      const nextSecs = hold.secs;
+      _holdAssistActive[d.key] = hold.active;
+      if (!hold.active) clearJointHoldAssist(d.key);
+      if (Math.abs(j.v - nextSecs) > 0.0004) { j.v = nextSecs; anyChanged = true; }
       return;
     }
 
+    _holdAssistActive[d.key] = false;
     const dps = Math.max(1, j.dps);
     const maxP = Math.min(j.maxSecs, PULSE_CAP_S);
     const sec = clamp(diff / dps, -maxP, maxP);
+    if (Math.abs(sec) >= 0.0005) armJointHoldAssist(d.key, now);
     // Avanzar committed por el ángulo que el pulso realmente producirá
     j.committed = clampJointDeg(d.key, j.committed + sec * dps);
     j.angPos    = j.committed;
@@ -220,10 +365,12 @@ function resetAngPos() {
     J[d.key].target    = home;
     J[d.key].committed = home;
     J[d.key].v         = 0;
+    clearJointHoldAssist(d.key);
     _manualPlanned[d.key] = home;
   });
 }
 
+// Actualiza solo el target lógico; el commit cycle emitirá los pulsos reales.
 function _setJointTargetRaw(key, deg) {
   if (!J[key]) return;
   J[key].target = snapTargetDeg(key, deg);
@@ -237,6 +384,7 @@ function _setJointTargetRaw(key, deg) {
   }
 }
 
+// Vacía la cola manual de un joint y decide si debe quedarse sosteniendo posición.
 function cancelQueuedMoves(key, opts = {}) {
   if (!J[key]) return;
   const holdPosition = opts.holdPosition !== false;
@@ -247,6 +395,7 @@ function cancelQueuedMoves(key, opts = {}) {
   if (holdPosition) _setJointTargetRaw(key, J[key].angPos);
 }
 
+// Conveniencia para abortar de una vez todas las colas manuales activas.
 function cancelAllQueuedMoves(opts = {}) {
   JDEFS.forEach(d => cancelQueuedMoves(d.key, opts));
 }
@@ -269,7 +418,7 @@ async function _runManualQueue(key, token) {
     const deadline = performance.now() + 15000;
     while (_manualToken[key] === token) {
       const atGoal  = Math.abs(J[key].angPos - goal) <= _POS_TOL;
-      const stopped = Math.abs(J[key].v) < 0.0005;
+      const stopped = Math.abs(J[key].v) < 0.0005 || isJointHoldAssistActive(key);
       if (atGoal && stopped) break;
       if (performance.now() > deadline) break;
       await _sleep(30);
@@ -280,6 +429,7 @@ async function _runManualQueue(key, token) {
   }
 }
 
+// Arranca el consumidor de cola solo cuando realmente hay trabajo pendiente.
 function _ensureManualQueueRunning(key) {
   if (_manualBusy[key]) return;
   _manualBusy[key] = true;
@@ -294,6 +444,7 @@ function _ensureManualQueueRunning(key) {
     });
 }
 
+// Descompone un movimiento largo en escalones de MANUAL_STEP_DEG.
 function _queueManualTargets(key, fromDeg, toDeg) {
   const step = Math.max(0.001, MANUAL_STEP_DEG);
   let cursor = fromDeg;
@@ -317,6 +468,7 @@ function _queueManualTargets(key, fromDeg, toDeg) {
   return Math.abs(cursor - fromDeg) > 1e-9;
 }
 
+// API pública de pasos manuales: encola sin saltarse los límites físicos.
 function queueManualMove(key, degrees) {
   if (!J[key] || !Math.abs(degrees)) return false;
 
@@ -393,6 +545,7 @@ function setJoint(key, val) {
   setJointTarget(key, val);
 }
 
+// Alias en lote para módulos heredados que aún piensan en "setters" directos.
 function batchJoints(targets) {
   for (const key in targets) {
     if (!(key in J)) continue;

@@ -8,6 +8,8 @@
 
 /* ── Sliders: ahora son grados objetivo (±angLim). El controlador
        interno en shared.js convierte grados→segundos para el firmware. ── */
+/* Recorremos las articulaciones para enlazar tanto el slider principal
+   como la copia del panel Arduino sin duplicar lógica por servo. */
 JDEFS.forEach(d => {
   ['sl-', 'ard-sl-'].forEach(prefix => {
     const sl = document.getElementById(prefix + d.key);
@@ -22,6 +24,8 @@ JDEFS.forEach(d => {
   sl.addEventListener('change', () => setJointTarget(d.key, parseFloat(sl.value)));
 });
 
+/* Recalcula los topes visibles del panel manual usando la calibración
+   efectiva del momento, incluyendo restricciones activas de visión. */
 function refreshManualRangeUi() {
   JDEFS.forEach(d => {
     const min = jointMin(d.key);
@@ -50,7 +54,7 @@ function refreshManualRangeUi() {
     if (totalLbl) totalLbl.textContent = `Rango total ${total}°`;
     if (sideLbl) {
       sideLbl.textContent =
-        `Límite actual: ${min}° a ${max}°. Si mandas ${total}°, el sistema lo parte en pasos de ${MANUAL_STEP_DEG}° y se detiene entre cada paso.`;
+        `Rango disponible: ${min}° a ${max}°. El sistema ejecuta movimientos en pasos de ${MANUAL_STEP_DEG}° para mantener estabilidad y precisión.`;
     }
     if (inp) {
       const safeMax = Math.max(MANUAL_STEP_DEG, total);
@@ -64,10 +68,13 @@ function refreshManualRangeUi() {
   });
 }
 
+// Ejecutar una primera sincronización para que la UI arranque coherente.
 refreshManualRangeUi();
 
 
 /* ── UI "Mover en grados" (pasos discretos usando °/s calibrado) ────── */
+/* Construye una tarjeta por articulación con botones de avance/retroceso
+   en pasos fijos; esto mantiene el HTML estático más compacto. */
 (function buildDegCtrls() {
   const wrap = document.getElementById('deg-ctrls');
   if (!wrap) return;
@@ -84,7 +91,7 @@ refreshManualRangeUi();
         <span class="jv" id="ang-${d.key}">0°</span>
       </div>
       <div id="deg-range-side-${d.key}" style="font-size:8px;color:var(--ink3);margin-bottom:6px">
-        Límite actual: ${min}° a ${max}°. Si mandas ${total}°, el sistema lo parte en pasos de ${MANUAL_STEP_DEG}° y se detiene entre cada paso.
+        Rango disponible: ${min}° a ${max}°. El sistema ejecuta movimientos en pasos de ${MANUAL_STEP_DEG}° para mantener estabilidad y precisión.
       </div>
       <div class="br" style="gap:4px;flex-wrap:wrap">
         <button class="btn" data-dkey="${d.key}" data-deg="-${MANUAL_STEP_DEG * 2}">◀◀ ${MANUAL_STEP_DEG * 2}°</button>
@@ -100,6 +107,8 @@ refreshManualRangeUi();
 
   refreshManualRangeUi();
 
+  // La resolución del botón se hace por data-* para reutilizar el mismo
+  // listener en todos los controles generados dinámicamente.
   wrap.addEventListener('click', e => {
     const b = e.target.closest('button[data-dkey]');
     if (!b) return;
@@ -125,13 +134,13 @@ refreshManualRangeUi();
     if (!isFinite(deg) || !deg) return;
     deg = snapDeltaDeg(deg, MANUAL_STEP_DEG);
     if (!queueManualMove(k, deg)) {
-      log(`${k}: límite alcanzado`, 'info');
+      log(`${k}: rango máximo alcanzado`, 'info');
       return;
     }
-    log(`${k}: ${deg > 0 ? '+' : ''}${deg}° programados en pasos de ${MANUAL_STEP_DEG}°`, 'ok');
+    log(`${k}: ajuste programado ${deg > 0 ? '+' : ''}${deg}°`, 'ok');
   });
 
-  // Refrescar ángulo estimado y °/s calibrado
+  // Refrescar ángulo estimado y °/s calibrado aunque no haya interacción.
   setInterval(() => {
     JDEFS.forEach(d => {
       const a = document.getElementById('ang-' + d.key);
@@ -143,6 +152,8 @@ refreshManualRangeUi();
 })();
 
 /* ── Botones ─────────────────────────────────────────────────── */
+/* El reset lógico cancela colas y fija como objetivo la posición actual,
+   evitando que quede un movimiento pendiente en segundo plano. */
 document.getElementById('btn-reset').addEventListener('click', () => {
   cancelAllQueuedMoves();
   JDEFS.forEach(d => {
@@ -163,6 +174,7 @@ document.getElementById('btn-home').addEventListener('click', () => {
 
 
 /* ── Teclado — pasos discretos de 10° por pulsación ── */
+/* Mapa de atajos: código físico del teclado → articulación y dirección. */
 const KM = {
   'KeyQ': ['base', -1],
   'KeyA': ['base', +1],
@@ -176,13 +188,16 @@ const KM = {
   'KeyG': ['grip', -1],
 };
 
+// Sirve para resaltar la última articulación accionada con teclado.
 const pressedKeys = new Set();
 
+// Mantiene la tarjeta visualmente resaltada mientras se usan atajos.
 function refreshKeyHighlight() {
   const last = Array.from(pressedKeys.keys()).pop();
   hlJ(last ? KM[last][0] : null);
 }
 
+// keydown dispara la programación del siguiente paso discreto.
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.repeat && KM[e.code]) {
@@ -214,6 +229,7 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// keyup limpia el estado visual, pero no cancela los pasos ya en cola.
 document.addEventListener('keyup', e => {
   if (!KM[e.code]) return;
   pressedKeys.delete(e.code);

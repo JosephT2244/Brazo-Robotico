@@ -14,6 +14,13 @@ const CAL_KEY = 'roboarm-ipn-v10-calib';
 
 /* Valores por defecto (iguales a JDEFS — rango completo de los servos) */
 const CAL_DEFAULTS = {
+  base: { min: -PHYSICAL_LIMITS.base, max:  PHYSICAL_LIMITS.base },
+  sho:  { min: -PHYSICAL_LIMITS.sho,  max:  PHYSICAL_LIMITS.sho  },
+  elb:  { min: -PHYSICAL_LIMITS.elb,  max:  PHYSICAL_LIMITS.elb  },
+  wri:  { min: -PHYSICAL_LIMITS.wri,  max:  PHYSICAL_LIMITS.wri  },
+  grip: { min: -PHYSICAL_LIMITS.grip, max:  PHYSICAL_LIMITS.grip },
+};
+const LEGACY_CAL_DEFAULTS = {
   base: { min: -90, max:  90 },
   sho:  { min: -45, max:  45 },
   elb:  { min: -30, max:  30 },
@@ -30,12 +37,20 @@ const HOME_DEFAULTS = {
 
 function normalizeCalRange(key, min, max) {
   const def = CAL_DEFAULTS[key];
+  const legacy = LEGACY_CAL_DEFAULTS[key];
   if (!def) return { min, max, migrated: false };
 
   // Migra automáticamente el rango viejo de la UI manual (−10° a +10°),
   // que dejaba al control manual con solo 20° totales aunque el joint
   // real admitiera más recorrido.
   if (min === -10 && max === 10 && (def.min !== -10 || def.max !== 10)) {
+    return { min: def.min, max: def.max, migrated: true };
+  }
+
+  // Si el usuario seguía con los topes de fábrica anteriores, ampliarlos
+  // al nuevo rango físico sin tocar calibraciones personalizadas.
+  if (legacy && min === legacy.min && max === legacy.max &&
+      (def.min !== legacy.min || def.max !== legacy.max)) {
     return { min: def.min, max: def.max, migrated: true };
   }
 
@@ -121,7 +136,7 @@ function applyHomeCalib() {
     if (!inp) return;
     const raw = parseFloat(inp.value);
     if (isNaN(raw) || raw < -d.angLim || raw > d.angLim) {
-      log(`HOME inválido en ${d.lbl}: debe estar entre ${-d.angLim}° y ${d.angLim}°`, 'err');
+      log(`Posición base no válida en ${d.lbl}: debe estar entre ${-d.angLim}° y ${d.angLim}°`, 'err');
       allValid = false;
       return;
     }
@@ -149,7 +164,7 @@ function trimNeu(key, delta) {
    y pide al usuario pulsar ESPACIO cuando el servo deje de moverse. */
 async function autoTrimNeu(key) {
   if (typeof writer === 'undefined' || !writer) {
-    log('Conecta el Arduino primero para auto-trim', 'err'); return;
+    log('Conecta el equipo primero para realizar este ajuste', 'err'); return;
   }
   setJointTarget(key, J[key].angPos);
   if (!confirm(
@@ -164,7 +179,7 @@ async function autoTrimNeu(key) {
   const onKey = (e) => { if (e.code === 'Space') { e.preventDefault(); cancelled = true; } };
   document.addEventListener('keydown', onKey);
 
-  log(`Auto-trim ${key}: barriendo 290 → 320… pulsa ESPACIO al detenerse`, 'info');
+  log(`Ajuste automático ${key}: buscando el punto estable… pulsa ESPACIO al detenerse`, 'info');
   for (let v = 290; v <= 320 && !cancelled; v++) {
     neutrals[key] = v;
     if (lbl) lbl.value = v;
@@ -181,10 +196,10 @@ async function autoTrimNeu(key) {
    uno por uno con los botones ◀ ▶. Barre bajando el PWM en cada uno. */
 async function autoTrimAll() {
   if (typeof writer === 'undefined' || !writer) {
-    log('Conecta el Arduino primero', 'err'); return;
+    log('Conecta el equipo primero', 'err'); return;
   }
   for (const d of JDEFS) setJointTarget(d.key, J[d.key].angPos);
-  log('Todos los servos "parados" — ajusta cada ◀/▶ hasta que no giren', 'info');
+  log('Todos los ejes quedaron en reposo — ajusta cada control hasta eliminar movimiento residual', 'info');
   sendNeutrals();
 }
 
@@ -312,9 +327,9 @@ document.getElementById('btn-save-cal').addEventListener('click', () => {
     saveDps();
     saveNeutrals();
     if (typeof sendNeutrals === 'function') sendNeutrals();
-    log('Calibración y HOME guardados — mueve un slider o usa "mover grados"', 'ok');
+    log('Ajustes y posición base guardados correctamente', 'ok');
   } catch (e) {
-    log('Error al guardar calibración', 'err');
+    log('No fue posible guardar los ajustes', 'err');
   }
 });
 
@@ -326,7 +341,7 @@ document.getElementById('btn-save-cal').addEventListener('click', () => {
 document.getElementById('btn-load-cal').addEventListener('click', () => {
   try {
     const saved = localStorage.getItem(CAL_KEY);
-    if (!saved) { log('No hay calibración guardada', 'err'); return; }
+    if (!saved) { log('No hay ajustes guardados', 'err'); return; }
     const data = JSON.parse(saved);
     let migrated = false;
     JDEFS.forEach(x => {
@@ -357,12 +372,12 @@ document.getElementById('btn-load-cal').addEventListener('click', () => {
     if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al cargar
     if (migrated) {
       try { localStorage.setItem(CAL_KEY, JSON.stringify(data)); } catch (e) {}
-      log('Calibración cargada y rango manual antiguo corregido automáticamente', 'ok');
+      log('Ajustes recuperados y rangos anteriores actualizados automáticamente', 'ok');
     } else {
-      log('Calibración y HOME cargados — mueve un slider para enviar al Arduino', 'ok');
+      log('Ajustes y posición base recuperados correctamente', 'ok');
     }
   } catch (e) {
-    log('Error al cargar calibración', 'err');
+    log('No fue posible recuperar los ajustes', 'err');
   }
 });
 
@@ -382,7 +397,7 @@ document.getElementById('btn-reset-cal').addEventListener('click', () => {
   applyCalib();
   applyHomeCalib();
   if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al restaurar
-  log('Calibración y HOME restaurados a valores por defecto', 'info');
+  log('Los ajustes y la posición base se restablecieron a sus valores iniciales', 'info');
 });
 
 
@@ -393,11 +408,11 @@ document.getElementById('btn-reset-cal').addEventListener('click', () => {
    ────────────────────────────────────────────────────────────── */
 document.getElementById('btn-go-min').addEventListener('click', () => {
   JDEFS.forEach(d => setJointTarget(d.key, J[d.key].calMin));
-  log('Moviendo a posiciones mínimas', 'info');
+  log('Llevando el equipo a posiciones mínimas', 'info');
 });
 document.getElementById('btn-go-max').addEventListener('click', () => {
   JDEFS.forEach(d => setJointTarget(d.key, J[d.key].calMax));
-  log('Moviendo a posiciones máximas', 'info');
+  log('Llevando el equipo a posiciones máximas', 'info');
 });
 
 document.getElementById('btn-capture-home').addEventListener('click', () => {
@@ -406,22 +421,23 @@ document.getElementById('btn-capture-home').addEventListener('click', () => {
     const inp = document.getElementById('hm-' + d.key);
     if (inp) inp.value = String(pose[d.key]);
   });
-  log('Pose actual capturada como HOME de referencia — pulsa Guardar para dejarla fija', 'ok');
+  log('La posición actual se guardó como referencia temporal — pulsa Guardar ajustes para conservarla', 'ok');
 });
 
 document.getElementById('btn-go-home-ref').addEventListener('click', () => {
   if (!applyHomeCalib()) return;
   moveToHomePose();
-  log('Moviendo al HOME de referencia', 'info');
+  log('Moviendo a la posición base', 'info');
 });
 
+// Restituye solo la referencia HOME sin alterar los límites min/max.
 document.getElementById('btn-reset-home').addEventListener('click', () => {
   JDEFS.forEach(d => {
     const inp = document.getElementById('hm-' + d.key);
     if (inp) inp.value = HOME_DEFAULTS[d.key];
   });
   applyHomeCalib();
-  log('HOME de referencia restaurado a 0°', 'info');
+  log('La posición base volvió a su valor inicial', 'info');
 });
 
 
@@ -439,16 +455,17 @@ document.getElementById('home-wrap').addEventListener('click', e => {
     const key = currentBtn.dataset.homeCurrent;
     setJointHome(key, J[key].angPos);
     refreshHomeInputs();
-    log(`${key}: HOME de referencia = posición actual`, 'ok');
+    log(`${key}: posición base actualizada con la posición actual`, 'ok');
     return;
   }
 
+  // Botón contextual por articulación para ir a su HOME individual.
   const goBtn = e.target.closest('button[data-home-go]');
   if (goBtn) {
     const key = goBtn.dataset.homeGo;
     if (!applyHomeCalib()) return;
     setJointTarget(key, getJointHome(key));
-    log(`${key}: moviendo a HOME de referencia`, 'info');
+    log(`${key}: moviendo a la posición base`, 'info');
   }
 });
 
@@ -495,9 +512,9 @@ try {
     if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
     if (migrated) {
       try { localStorage.setItem(CAL_KEY, JSON.stringify(normalized)); } catch (e) {}
-      log('Calibración previa restaurada y rango manual antiguo corregido automáticamente', 'info');
+      log('Se restauraron los ajustes previos y se actualizaron los rangos anteriores automáticamente', 'info');
     } else {
-      log('Calibración previa y HOME restaurados automáticamente', 'info');
+      log('Se restauraron automáticamente los ajustes previos y la posición base', 'info');
     }
   }
 } catch (e) {

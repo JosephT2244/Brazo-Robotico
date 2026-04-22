@@ -123,6 +123,7 @@ const MAT = {
 };
 
 /* ─── Helpers ──────────────────────────────────────────────── */
+// Crea una malla con sombras activadas, que es el caso común del modelo.
 function mk(geo, mat) {
   const m = new THREE.Mesh(geo, mat);
   m.castShadow = m.receiveShadow = true;
@@ -133,6 +134,7 @@ function cyl(rt, rb, h, s, mat)   { return mk(new THREE.CylinderGeometry(rt, rb,
 function trs(R, r, mat, ts, rs)   { return mk(new THREE.TorusGeometry(R, r, ts||10, rs||26), mat); }
 function cone(r, h, s, mat)       { return mk(new THREE.ConeGeometry(r, h, s, 1), mat); }
 
+// Posiciona y rota una pieza antes de anexarla al grupo padre.
 function place(parent, obj, x, y, z, rx, ry, rz) {
   if (x !== undefined) obj.position.set(x, y||0, z||0);
   if (rx !== undefined) obj.rotation.set(rx, ry||0, rz||0);
@@ -140,6 +142,7 @@ function place(parent, obj, x, y, z, rx, ry, rz) {
   return obj;
 }
 
+// Agrupa subconjuntos mecánicos para luego rotarlos como una articulación.
 function group(parent, x, y, z) {
   const g = new THREE.Group();
   if (x !== undefined) g.position.set(x, y||0, z||0);
@@ -182,10 +185,12 @@ function roundedPlate(parent, w, h, d, r, mat, x, y, z) {
   return g;
 }
 
+// Los agujeros se modelan como cilindros cromados visibles, no como booleanos.
 function addHole(parent, x, y, z, r, h) {
   place(parent, cyl(r, r, h, 16, MAT.chr), x, y, z);
 }
 
+// Marco abierto usado en el brazo superior y antebrazo para replicar el chasis.
 function openFrame(parent, x, y, z, w, h, l, t, topMat, bottomMat) {
   const g = group(parent, x, y, z);
   const tm = topMat || MAT.red;
@@ -206,6 +211,7 @@ function openFrame(parent, x, y, z, w, h, l, t, topMat, bottomMat) {
   return g;
 }
 
+// Engranaje estilizado: disco central + dientes simples para que rinda bien.
 function gear(parent, x, y, z, radius, thickness, teeth, toothDepth, toothWidth, mat) {
   const g = group(parent, x, y, z);
   const disc = cyl(radius, radius, thickness, Math.max(28, teeth * 2), mat || MAT.gear);
@@ -234,6 +240,7 @@ function gear(parent, x, y, z, radius, thickness, teeth, toothDepth, toothWidth,
   return g;
 }
 
+// Cada garra se construye espejada usando side = ±1.
 function jaw(parent, side) {
   const g = group(parent, side * 0.185, -0.038, 0.055);
 
@@ -520,6 +527,7 @@ function _targetGrip() {
   return 0.04 + clamp(t, 0, 1) * 0.30;
 }
 
+// Interpola suavemente el estado visual hacia el ángulo real estimado.
 function _tickVA() {
   const now = performance.now();
   const dt  = Math.min((now - _vaT) / 1000, 0.05);
@@ -533,6 +541,7 @@ function _tickVA() {
   _va.grip += (_targetGrip()       - _va.grip) * k;
 }
 
+// Aplica el estado visual calculado a cada group jerárquico del brazo.
 function _applyVA() {
   baseG.rotation.y = _va.base;
   shoG.rotation.x  = _va.sho;
@@ -586,6 +595,7 @@ window.addEventListener('resize', resize3d);
    igual de fluido para este tipo de visualización. */
 const TARGET_FRAME_MS = 1000 / 30;
 let _lastRender3d = 0;
+// Loop principal: suaviza cámara, anima juntas y renderiza a ~30 fps.
 function loop3d(now) {
   requestAnimationFrame(loop3d);
   now = now || performance.now();
