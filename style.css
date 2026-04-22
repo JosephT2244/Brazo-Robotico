@@ -25,7 +25,7 @@ header{display:flex;align-items:center;gap:14px;padding:0 20px;background:var(--
 #btn-sidebar-toggle{display:none;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid #6E0F1E55;background:#38090F44;color:#C0A8B0;cursor:pointer;flex-shrink:0;transition:all var(--tr)}
 #btn-sidebar-toggle:hover{background:#6E0F1E44;color:#EDE7DD}
 #btn-sidebar-toggle svg{width:18px;height:18px}
-/* Viewport principal: canvas 3D, HUDs, cámara y caja de log. */
+/* Viewport principal: canvas 3D, HUD, cámara y caja de log. */
 #vp{position:relative;overflow:hidden;background:radial-gradient(ellipse 80% 70% at 45% 38%,#F5EFE6 0%,#E8DFD2 55%,#D8CEBE 100%)}
 #three-canvas{display:block;width:100%;height:100%}
 #hud{position:absolute;top:14px;left:14px;pointer-events:none;background:#FDFAF6EE;backdrop-filter:blur(6px);border:1px solid var(--brd);border-left:3px solid var(--g);padding:10px 14px;min-width:128px;box-shadow:0 2px 16px #00000012}
@@ -903,8 +903,7 @@ select.sel:focus-visible, input:focus-visible{
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Ajuste sobrio
-   Blanca · guinda · crema · enfoque IPN
+   Blanca · guinda · crema
    ═══════════════════════════════════════════════════════════════ */
 
 body{
