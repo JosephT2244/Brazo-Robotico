@@ -1,72 +1,76 @@
-/* ══════════════════════════════════ ══════════════
-   arduino.js — Control Serial RoboArm IPN v4.0
+/* ════════════════════════════════════════════════
+   arduino.js — Control Serial RoboArm IPN v5.0 (POSICIÓN)
    ────────────────────────────────────────────────────────────────
-   CANALES PCA9685 — Configurables por el usuario desde la UI.
-   Los valores por defecto son los del hardware físico, pero
-   cualquier asignación canal↔servo puede cambiarse sin tocar código.
-
-   El firmware se regenera automáticamente con cada cambio.
+   Servos MG995 Hi-SPEED de 180° controlados por POSICIÓN angular.
 
    PROTOCOLO:
-     TX → Arduino: "B:90,H:90,C:20,W:90,G:0\n"
-     RX ← Arduino: "OK B:90 H:90 C:20 W:90 G:0\n" | "PONG" | "READY"
+     TX → Arduino: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0\n"
+       (ángulos en GRADOS, signo respecto al cero calibrado)
+     RX ← Arduino: "OK B:90 H:45 C:-22 W:-90 G:30\n" | "PONG" | "READY"
+
+   COMANDOS especiales:
+     PING            → PONG
+     HOME            → todos los servos a 0° lógico
+     Z:b,h,c,w,g     → fija el PWM (ticks PCA9685) que corresponde al 0°
+                       de cada servo (calibración del cero)
+     LIM:b-,b+,h-,h+,c-,c+,w-,w+,g-,g+
+                     → fija los límites angulares por servo en el firmware
 
    Dependencias: shared.js (J, JDEFS, clamp, lerp, batchJoints, log, modal)
    ════════════════════════════════════════════════ */
 
+
 /* ══════════════════════════════════════════════
-   MAPA DE CANALES — corazón del sistema configurable
-   ──────────────────────────────────────────────────────────────
-   chanMap[servo] = número de canal PCA9685 (0–15)
-   Se guarda en localStorage para persistir entre sesiones.
+   MAPA DE CANALES — relación servo ↔ canal PCA9685
    ══════════════════════════════════════════════ */
 const CHAN_DEFAULTS = { base:4, sho:3, elb:2, wri:1, grip:0 };
-const CHAN_KEY      = 'roboarm-channels-v4';
-const totalRangeLabel = deg => `${deg * 2}° totales`;
+const CHAN_KEY      = 'roboarm-channels-v5';
+const totalRangeLabel = total => `${total}° totales`;
 
-// Cargar configuración guardada o usar defaults
 let chanMap = { ...CHAN_DEFAULTS };
 try {
   const saved = localStorage.getItem(CHAN_KEY);
   if (saved) {
     const parsed = JSON.parse(saved);
-    // Validar que todas las claves existen y son números 0-15
     const valid = ['base','sho','elb','wri','grip'].every(k =>
       typeof parsed[k] === 'number' && parsed[k] >= 0 && parsed[k] <= 15
     );
     if (valid) chanMap = parsed;
   }
-} catch(e) { /* usar defaults */ }
+} catch(e) { /* defaults */ }
 
-/* ── Meta-info de cada servo (para firmware y telemetría) ───── */
+/* Meta-info por servo (para firmware y telemetría) */
 const SERVO_META = {
-  base: { label:'Base',   varName:'CH_BASE',     min:-PHYSICAL_LIMITS.base, max:PHYSICAL_LIMITS.base, offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.base) },
-  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:-PHYSICAL_LIMITS.sho,  max:PHYSICAL_LIMITS.sho,  offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.sho)  },
-  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:-PHYSICAL_LIMITS.elb,  max:PHYSICAL_LIMITS.elb,  offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.elb)  },
-  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:-PHYSICAL_LIMITS.wri,  max:PHYSICAL_LIMITS.wri,  offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.wri)  },
-  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:-PHYSICAL_LIMITS.grip, max:PHYSICAL_LIMITS.grip, offset:0, centered:true,  range:totalRangeLabel(PHYSICAL_LIMITS.grip) },
+  base: { label:'Base',   varName:'CH_BASE',     min:-PHYSICAL_LIMITS.base, max:PHYSICAL_LIMITS.base, range:totalRangeLabel(PHYSICAL_TOTAL.base) },
+  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:-PHYSICAL_LIMITS.sho,  max:PHYSICAL_LIMITS.sho,  range:totalRangeLabel(PHYSICAL_TOTAL.sho)  },
+  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:-PHYSICAL_LIMITS.elb,  max:PHYSICAL_LIMITS.elb,  range:totalRangeLabel(PHYSICAL_TOTAL.elb)  },
+  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:-PHYSICAL_LIMITS.wri,  max:PHYSICAL_LIMITS.wri,  range:totalRangeLabel(PHYSICAL_TOTAL.wri)  },
+  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:-PHYSICAL_LIMITS.grip, max:PHYSICAL_LIMITS.grip, range:totalRangeLabel(PHYSICAL_TOTAL.grip) },
 };
 
+
 /* ══════════════════════════════════════════════
-   TRIM NEUTRAL POR SERVO — corrige deriva cuando "parado"
+   CALIBRACIÓN DE CERO POR SERVO
    ──────────────────────────────────────────────────────────────
-   Cada servo continuo tiene un PWM "neutro" ligeramente distinto
-   (1500 µs ±50 µs). Si usamos el mismo valor para todos, algunos
-   giran lentamente aunque el usuario los crea parados. El usuario
-   calibra el trim y se guarda en localStorage.
+   Cada MG995 tiene su propio "centro" físico. El usuario calibra
+   el PWM (en ticks PCA9685) que corresponde a "0° lógico" de cada
+   servo. Por defecto = 307 (≈1500 µs, centro estándar). El offset
+   se guarda en localStorage como "neutro" por servo.
    ══════════════════════════════════════════════ */
-// v2: valores medidos por el usuario en su hardware real.
-// base 312, hombro 314, codo 325, muñeca 332 (ajustar si deriva), pinza 312
-const NEUTRAL_KEY     = 'roboarm-neutrals-v3';
-const NEUTRAL_DEFAULT = 322;   // centro de la zona muerta medida (~321–325)
-let neutrals = { base:313, sho:314, elb:325, wri:328, grip:313 };
+const PULSE_HARD_MIN = 102;   // ≈ 500 µs (0° del servo MG995)
+const PULSE_HARD_MAX = 512;   // ≈ 2500 µs (180° del servo MG995)
+const PWM_PER_DEG    = (PULSE_HARD_MAX - PULSE_HARD_MIN) / 180;  // ≈ 2.28 ticks/°
+const NEUTRAL_KEY     = 'roboarm-zeros-v1';
+const NEUTRAL_DEFAULT = Math.round((PULSE_HARD_MIN + PULSE_HARD_MAX) / 2);  // 307
+
+let neutrals = { base:NEUTRAL_DEFAULT, sho:NEUTRAL_DEFAULT, elb:NEUTRAL_DEFAULT, wri:NEUTRAL_DEFAULT, grip:NEUTRAL_DEFAULT };
 try {
-  localStorage.removeItem('roboarm-neutrals-v1');
-  localStorage.removeItem('roboarm-neutrals-v2');  // limpiar versiones viejas
+  // Limpia versiones previas que mezclaban "neutro de velocidad"
+  ['roboarm-neutrals-v1','roboarm-neutrals-v2','roboarm-neutrals-v3'].forEach(k => localStorage.removeItem(k));
   const saved = JSON.parse(localStorage.getItem(NEUTRAL_KEY) || 'null');
   if (saved) ['base','sho','elb','wri','grip'].forEach(k => {
     const n = parseInt(saved[k]);
-    if (n >= 260 && n <= 360) neutrals[k] = n;
+    if (n >= PULSE_HARD_MIN && n <= PULSE_HARD_MAX) neutrals[k] = n;
   });
 } catch(e) { /* defaults */ }
 
@@ -74,87 +78,75 @@ function saveNeutrals() {
   try { localStorage.setItem(NEUTRAL_KEY, JSON.stringify(neutrals)); } catch(e) {}
 }
 
-/** Envía al Arduino el comando NEU:b,h,c,w,g con los trims actuales. */
+/** Envía al Arduino los ceros PWM calibrados. */
 function sendNeutrals() {
   if (!writer) return;
-  const cmd = `NEU:${neutrals.base},${neutrals.sho},${neutrals.elb},${neutrals.wri},${neutrals.grip}`;
+  const cmd = `Z:${neutrals.base},${neutrals.sho},${neutrals.elb},${neutrals.wri},${neutrals.grip}`;
   return sendRaw(cmd);
 }
 
-/* Refresco periódico de neutrales cada 4 s — si el firmware perdió el
-   valor (reset silencioso, glitch I2C) la muñeca vuelve a detenerse. */
+/** Refresca cada 8 s los ceros (por si el firmware se reinició silencioso). */
 let _neuRefreshTimer = null;
 function startNeuRefresh() {
   clearInterval(_neuRefreshTimer);
   _neuRefreshTimer = setInterval(() => {
     if (writer) sendNeutrals();
-  }, 4000);
+  }, 8000);
 }
 function stopNeuRefresh() {
   clearInterval(_neuRefreshTimer);
   _neuRefreshTimer = null;
 }
 
-const PULSE_HARD_MIN = 130;
-const PULSE_HARD_MAX = 490;
-// Refuerzo direccional interno del hombro. No se expone en la UI.
-// En este montaje, hombro negativo = elevar/subir.
-const SHOULDER_LIFT_SIGN = -1;
-const SHOULDER_UP_DELTA_BOOST = 18;
-const SHOULDER_DOWN_DELTA_BOOST = 0;
-// Reducir discretamente la fuerza base en los servos que no cargan el peso principal.
-const SERVO_FORCE_TRIM = { base:-4, sho:0, elb:0, wri:-4, grip:-4 };
-
-function isShoulderLiftCommand(secs) {
-  return Math.sign(secs) === SHOULDER_LIFT_SIGN;
+/** Convierte ángulo (°) → PWM (ticks PCA9685) usando el neutro calibrado. */
+function angleToPwm(key, deg) {
+  const n = neutrals[key] ?? NEUTRAL_DEFAULT;
+  const v = n + Math.round(deg * PWM_PER_DEG);
+  return clamp(v, PULSE_HARD_MIN, PULSE_HARD_MAX);
 }
 
-function speedDpsToPulseDelta(dps) {
-  const t = (clamp(dps, MIN_SPEED_DPS, MAX_SPEED_DPS) - MIN_SPEED_DPS) / (MAX_SPEED_DPS - MIN_SPEED_DPS || 1);
-  return Math.round(12 + t * 26);
-}
-
-function pulseDeltaForCommand(key, secs, dps = speedDps) {
-  let delta = speedDpsToPulseDelta(dps) + (SERVO_FORCE_TRIM[key] || 0);
-  if (key === 'sho') {
-    delta += isShoulderLiftCommand(secs) ? SHOULDER_UP_DELTA_BOOST : SHOULDER_DOWN_DELTA_BOOST;
-  }
-  return Math.max(0, delta);
-}
-
-function velPWM(secs, key) {
-  if (Math.abs(secs) < 0.0005) return (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
-  const delta = pulseDeltaForCommand(key, secs, speedDps);
-  const neutral = (key && neutrals[key]) ? neutrals[key] : NEUTRAL_DEFAULT;
-  return secs > 0
-    ? clamp(neutral + delta, PULSE_HARD_MIN, PULSE_HARD_MAX)
-    : clamp(neutral - delta, PULSE_HARD_MIN, PULSE_HARD_MAX);
-}
-
-function sendSpeedProfile() {
+/** Envía los límites angulares calibrados al firmware (clamp duro). */
+function sendCalibLimits() {
   if (!writer) return;
-  return sendRaw(`SPD:${speedDps.toFixed(1)}`);
+  const order = ['base','sho','elb','wri','grip'];
+  const parts = [];
+  order.forEach(k => {
+    parts.push(Math.round(jointMin(k)), Math.round(jointMax(k)));
+  });
+  return sendRaw(`LIM:${parts.join(',')}`);
 }
+
 
 /* ══════════════════════════════════════════════
-   GENERADOR DE FIRMWARE — produce el .ino con los canales
-   correctos según chanMap actual. Se llama cada vez que
-   el usuario cambia un canal.
+   GENERADOR DE FIRMWARE
+   Genera un .ino que usa PCA9685 en modo POSICIÓN.
+   Incluye: conversión ángulo→PWM, ZERO trim, límites duros.
    ══════════════════════════════════════════════ */
 function generateFirmware() {
-  // Comentario de asignación legible
   const chanComment = ['base','sho','elb','wri','grip']
     .map(k => `//    CH${chanMap[k]} = ${SERVO_META[k].label.padEnd(7)} (${SERVO_META[k].range})`)
     .join('\n');
 
-  // Define lines
   const defineLines = ['base','sho','elb','wri','grip']
     .map(k => `#define ${SERVO_META[k].varName.padEnd(13)} ${chanMap[k]}`)
     .join('\n');
 
+  const limMin = JDEFS.map(d => Math.round(jointMin(d.key))).join(', ');
+  const limMax = JDEFS.map(d => Math.round(jointMax(d.key))).join(', ');
+
   return `// ═══════════════════════════════════════════
-//  RoboArm IPN — Firmware v4.0
-//  Hardware: Arduino Uno/Mega + PCA9685 + 5× MG995
+//  RoboArm IPN — Firmware v5.1  (POSICIÓN · MG995 Hi-SPEED 180°)
+//
+//  ESTE FIRMWARE ES EXCLUSIVAMENTE PARA SERVOS DE ÁNGULO (POSICIÓN):
+//    • Cada comando especifica un ÁNGULO en grados.
+//    • La conversión grados → PWM se hace por la fórmula:
+//          PWM = zeroPwm[i] + grados * (PULSE_HARD_MAX - PULSE_HARD_MIN) / 180
+//      donde zeroPwm[i] es el PWM calibrado del 0° lógico de cada servo.
+//    • NO existe lógica de "velocidad" ni de "pulsos por segundos".
+//      El servo MG995 mueve internamente al ángulo solicitado y mantiene
+//      esa posición mientras reciba la señal PWM correspondiente.
+//
+//  Hardware: Arduino Uno/Mega + PCA9685 + 5× MG995 Hi-SPEED 180°
 //
 //  CONEXIONES PCA9685:
 //    Arduino 5V  → VCC    (alimentación lógica del módulo)
@@ -167,78 +159,79 @@ function generateFirmware() {
 //  CANALES PCA9685 (configurados desde la web):
 ${chanComment}
 //
-//  Protocolo RX: "B:90,H:90,C:20,W:90,G:0\\n"
-//  Protocolo TX: "OK B:90 H:90 C:20 W:90 G:0\\n"
-//  Arranque seguro: sin señal a los servos hasta recibir
-//  el primer comando válido desde la página web.
+//  Protocolo RX: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0\\n" (grados)
+//  Protocolo TX: "OK B:90 H:45 C:-22 W:-90 G:30\\n"
+//
+//  Comandos especiales:
+//    PING                  → PONG
+//    HOME                  → todos los servos a 0° lógico
+//    Z:b,h,c,w,g           → calibración del cero PWM por servo
+//    LIM:b-,b+,...,g-,g+   → límites angulares por servo (firmware)
+//    STOP                  → PARO DE EMERGENCIA: el firmware FIJA cada
+//                            servo en su PWM actual y descarta cualquier
+//                            comando de movimiento posterior. Los servos
+//                            mantienen exactamente su posición actual
+//                            (no se mueven a "neutro" ni a 0°).
+//    RESUME                → libera el bloqueo del PARO. A partir de
+//                            aquí los movimientos vuelven a aceptarse.
+//    OFF                   → corta la señal PWM (servos quedan libres).
 // ═══════════════════════════════════════════
 
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-// Dirección I2C del PCA9685 (0x40 por defecto, sin jumpers soldados)
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
-// Parámetros PWM para MG995 @ 50 Hz
-#define SERVO_FREQ         50      // Hz
-#define PULSE_HARD_MIN     130     // límite duro del servo / PCA9685
-#define PULSE_HARD_MAX     490
-#define SPEED_DELTA_MIN    12      // muy lento
-#define SPEED_DELTA_MAX    38      // rápido pero aún controlable
-#define SPEED_DELTA_DEFAULT ${speedDpsToPulseDelta(speedDps)}
-#define BASE_DELTA_TRIM ${SERVO_FORCE_TRIM.base}
-#define SHOULDER_DELTA_TRIM ${SERVO_FORCE_TRIM.sho}
-#define ELBOW_DELTA_TRIM ${SERVO_FORCE_TRIM.elb}
-#define WRIST_DELTA_TRIM ${SERVO_FORCE_TRIM.wri}
-#define GRIP_DELTA_TRIM ${SERVO_FORCE_TRIM.grip}
-#define SHOULDER_LIFT_SIGN ${SHOULDER_LIFT_SIGN}
-#define SHOULDER_UP_DELTA_BOOST ${SHOULDER_UP_DELTA_BOOST}
-#define SHOULDER_DOWN_DELTA_BOOST ${SHOULDER_DOWN_DELTA_BOOST}
+// PCA9685 a 50 Hz. Período 20 ms / 4096 ticks ⇒ 1 tick ≈ 4.88 µs.
+#define SERVO_FREQ        50
+#define PULSE_HARD_MIN    ${PULSE_HARD_MIN}     // ≈ 500 µs  → 0°  del MG995
+#define PULSE_HARD_MAX    ${PULSE_HARD_MAX}     // ≈ 2500 µs → 180° del MG995
 
-// ── Asignación de canales PCA9685 ────────────────────────────
+// 1° ≈ ${PWM_PER_DEG.toFixed(3)} ticks. Usamos un múltiplo entero por simplicidad.
+#define PWM_PER_DEG_X100  ${Math.round(PWM_PER_DEG * 100)}
+
+// ── Asignación de canales ──────────────────────────────────────
 ${defineLines}
 
-// ── Un servo de velocidad/continuo: temporizador + dirección ──
-struct Srv { float t = 0.0f; int d = 0; };
-// t = segundos restantes, d = +1 adelante / -1 atrás / 0 parado
-Srv sv[5];  // [0]=BASE [1]=HOMBRO [2]=CODO [3]=MUÑECA [4]=PINZA
-
-// Índices de canal (mismo orden que sv[])
 const uint8_t CH_IDX[5] = { CH_BASE, CH_SHOULDER, CH_ELBOW, CH_WRIST, CH_GRIPPER };
 
-String buf = "";
-unsigned long _lastTick = 0;
-unsigned long _lastAtPos = 0;   // throttle de AT_POS (evita inundar el PC)
+// PWM correspondiente al 0° lógico de cada servo (calibrable en caliente con Z:)
+uint16_t zeroPwm[5] = { ${neutrals.base}, ${neutrals.sho}, ${neutrals.elb}, ${neutrals.wri}, ${neutrals.grip} };
 
-// ── Trim neutral por servo (PWM exacto para que el servo no derive)
-// Editable en caliente con "NEU:b,h,c,w,g"
-uint16_t neu[5] = { ${neutrals.base}, ${neutrals.sho}, ${neutrals.elb}, ${neutrals.wri}, ${neutrals.grip} };
-int8_t deltaTrim[5] = { BASE_DELTA_TRIM, SHOULDER_DELTA_TRIM, ELBOW_DELTA_TRIM, WRIST_DELTA_TRIM, GRIP_DELTA_TRIM };
-uint8_t speedDelta = SPEED_DELTA_DEFAULT;
+// Límites angulares por servo (en GRADOS, ya restringidos a la calibración del usuario)
+int8_t  limMin[5] = { ${limMin} };
+int8_t  limMax[5] = { ${limMax} };
+
+// Última posición conocida (en GRADOS) por servo.
+// Cada servo MG995 mantiene esta posición mientras la PCA9685 emita
+// el PWM correspondiente — no se necesita "refresh" continuo.
+float lastDeg[5] = { 0, 0, 0, 0, 0 };
 bool outputsEnabled = false;
 
-// ── PWM según dirección: neutral exacto por servo = parado ────
-uint16_t dirPWM(uint8_t i, int d) {
-  int delta = (int)speedDelta + (int)deltaTrim[i];
-  if (i == 1) {
-    if (d == SHOULDER_LIFT_SIGN) delta += SHOULDER_UP_DELTA_BOOST;
-    else if (d == -SHOULDER_LIFT_SIGN) delta += SHOULDER_DOWN_DELTA_BOOST;
-  }
-  delta = max(0, delta);
-  if (d > 0) return constrain((int)neu[i] + delta, PULSE_HARD_MIN, PULSE_HARD_MAX);
-  if (d < 0) return constrain((int)neu[i] - delta, PULSE_HARD_MIN, PULSE_HARD_MAX);
-  return neu[i];
-}
+// Estado del PARO DE EMERGENCIA. Mientras "frozen" sea true:
+//   • Los servos siguen recibiendo SU PWM actual (mantienen posición).
+//   • Cualquier comando de movimiento (B:/H:/C:/W:/G:) es DESCARTADO.
+//   • Sólo RESUME, OFF, PING o calibración pueden cambiar el estado.
+// Esto garantiza que un STOP no envía a los servos a un "neutro" que
+// pudiera no estar correctamente calibrado: el servo se queda
+// exactamente donde lo dejó el último comando.
+bool frozen = false;
 
-void setSpeedProfile(float dps) {
-  dps = constrain(dps, ${MIN_SPEED_DPS}.0f, ${MAX_SPEED_DPS}.0f);
-  float t = (dps - ${MIN_SPEED_DPS}.0f) / (${MAX_SPEED_DPS - MIN_SPEED_DPS}.0f);
-  speedDelta = (uint8_t)roundf(SPEED_DELTA_MIN + t * (SPEED_DELTA_MAX - SPEED_DELTA_MIN));
+String buf = "";
+unsigned long _lastAtPos = 0;
+
+uint16_t angleToPwm(uint8_t i, float deg) {
+  if (deg < (float)limMin[i]) deg = (float)limMin[i];
+  if (deg > (float)limMax[i]) deg = (float)limMax[i];
+  long delta = (long)(deg * (float)PWM_PER_DEG_X100 / 100.0f);
+  long v = (long)zeroPwm[i] + delta;
+  if (v < PULSE_HARD_MIN) v = PULSE_HARD_MIN;
+  if (v > PULSE_HARD_MAX) v = PULSE_HARD_MAX;
+  return (uint16_t)v;
 }
 
 void disableServoSignals() {
-  for (uint8_t i = 0; i < 5; i++)
-    pwm.setPWM(CH_IDX[i], 0, 4096);
+  for (uint8_t i = 0; i < 5; i++) pwm.setPWM(CH_IDX[i], 0, 4096);
 }
 
 void armOutputs() {
@@ -246,67 +239,104 @@ void armOutputs() {
   outputsEnabled = true;
 }
 
-// ── Aplica estado actual a todos los canales ──────────────────
-// Cuando d=0: envía el pulso neutro calibrado (≈1500 µs ajustable).
-// Es crítico que cada servo tenga su neu[] bien ajustado — si no,
-// el servo continuo derivará lentamente.
-void applyServos() {
+void writeServo(uint8_t i, float deg) {
+  lastDeg[i] = deg;
   if (!outputsEnabled) return;
+  pwm.setPWM(CH_IDX[i], 0, angleToPwm(i, deg));
+}
+
+void writeAll() {
   for (uint8_t i = 0; i < 5; i++)
-    pwm.setPWM(CH_IDX[i], 0, dirPWM(i, sv[i].d));
+    pwm.setPWM(CH_IDX[i], 0, angleToPwm(i, lastDeg[i]));
 }
 
-// ── Programa un servo: secs>0=adelante, secs<0=atrás, 0=parar ─
-void setServo(uint8_t i, float secs) {
-  // Umbral bajado de 0.01 → 0.001: permite correcciones finas (~0.72°)
-  if (fabsf(secs) < 0.001f) { sv[i].t = 0; sv[i].d = 0; }
-  else { sv[i].t = fabsf(secs); sv[i].d = secs > 0 ? 1 : -1; }
-}
-
-// ── Parser de comandos seriales ───────────────────────────────
-// Formato: "B:2.5,H:-1.0,C:0"  B/H/C/W/G: segundos (+ = adelante, - = atrás, 0 = parar)
-// Especiales: PING, HOME (parar todo)
 void parseCmd(String cmd) {
   cmd.trim();
   if (!cmd.length()) return;
 
   if (cmd == "PING") { Serial.println("PONG"); return; }
 
-  if (cmd == "HOME") {
-    for (uint8_t i = 0; i < 5; i++) { sv[i].t = 0; sv[i].d = 0; }
+  // ── PARO DE EMERGENCIA ────────────────────────────────────
+  // Congela el firmware en la posición actual de cada servo.
+  // Re-emitimos las últimas PWM para asegurar que la PCA9685 las
+  // tenga vivas y los servos NO se muevan a un valor por error.
+  if (cmd == "STOP") {
+    frozen = true;
     armOutputs();
-    applyServos();
+    writeAll();
+    Serial.println("OK STOP");
+    return;
+  }
+
+  // Libera el bloqueo del PARO. A partir de aquí los movimientos
+  // vuelven a aceptarse normalmente.
+  if (cmd == "RESUME") {
+    frozen = false;
+    Serial.println("OK RESUME");
+    return;
+  }
+
+  // Corta la señal PWM (servos quedan libres).
+  if (cmd == "OFF") {
+    frozen = true;
+    outputsEnabled = false;
+    disableServoSignals();
+    Serial.println("OK OFF");
+    return;
+  }
+
+  if (cmd == "HOME") {
+    if (frozen) { Serial.println("BLOCKED frozen"); return; }
+    for (uint8_t i = 0; i < 5; i++) lastDeg[i] = 0;
+    armOutputs();
+    writeAll();
     Serial.println("OK HOME");
     return;
   }
 
-  if (cmd.startsWith("SPD:")) {
-    setSpeedProfile(cmd.substring(4).toFloat());
-    armOutputs();
-    applyServos();
-    Serial.print("OK SPD ");
-    Serial.println(speedDelta);
-    return;
-  }
-
-  // "NEU:b,h,c,w,g" → actualiza trims neutrales en caliente (sin re-flashear)
-  if (cmd.startsWith("NEU:")) {
-    String body = cmd.substring(4);
+  // Z:b,h,c,w,g  → calibración del cero (PWM ticks por servo)
+  if (cmd.startsWith("Z:")) {
+    String body = cmd.substring(2);
     int idx = 0, s2 = 0;
     while (s2 < (int)body.length() && idx < 5) {
       int cm = body.indexOf(',', s2); if (cm < 0) cm = body.length();
       long v = body.substring(s2, cm).toInt();
-      if (v >= 260 && v <= 360) neu[idx] = (uint16_t)v;
+      if (v >= PULSE_HARD_MIN && v <= PULSE_HARD_MAX) zeroPwm[idx] = (uint16_t)v;
       s2 = cm + 1; idx++;
     }
     armOutputs();
-    applyServos();
-    Serial.print("OK NEU");
-    for (uint8_t i = 0; i < 5; i++) { Serial.print(' '); Serial.print(neu[i]); }
+    writeAll();
+    Serial.print("OK Z");
+    for (uint8_t i = 0; i < 5; i++) { Serial.print(' '); Serial.print(zeroPwm[i]); }
     Serial.println();
     return;
   }
 
+  // LIM:b-,b+,h-,h+,c-,c+,w-,w+,g-,g+
+  if (cmd.startsWith("LIM:")) {
+    String body = cmd.substring(4);
+    int idx = 0, s2 = 0;
+    while (s2 < (int)body.length() && idx < 10) {
+      int cm = body.indexOf(',', s2); if (cm < 0) cm = body.length();
+      long v = body.substring(s2, cm).toInt();
+      if (v >= -127 && v <= 127) {
+        if ((idx & 1) == 0) limMin[idx >> 1] = (int8_t)v;
+        else                limMax[idx >> 1] = (int8_t)v;
+      }
+      s2 = cm + 1; idx++;
+    }
+    Serial.println("OK LIM");
+    armOutputs();
+    writeAll();
+    return;
+  }
+
+  // Posiciones angulares: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0"
+  // Si el firmware está en PARO (frozen), descartamos por completo.
+  if (frozen) {
+    Serial.println("BLOCKED frozen");
+    return;
+  }
   int s = 0;
   bool hasMotionCmd = false;
   while (s < (int)cmd.length()) {
@@ -314,24 +344,22 @@ void parseCmd(String cmd) {
     String tok = cmd.substring(s, cm);
     int col = tok.indexOf(':');
     if (col > 0) {
-      float v = constrain(tok.substring(col + 1).toFloat(), -10.0f, 10.0f);
+      float v = tok.substring(col + 1).toFloat();
+      uint8_t i = 255;
       switch (tok.charAt(0)) {
-        case 'B': setServo(0, v); hasMotionCmd = true; break;
-        case 'H': setServo(1, v); hasMotionCmd = true; break;
-        case 'C': setServo(2, v); hasMotionCmd = true; break;
-        case 'W': setServo(3, v); hasMotionCmd = true; break;
-        case 'G': setServo(4, v); hasMotionCmd = true; break;
+        case 'B': i = 0; break;
+        case 'H': i = 1; break;
+        case 'C': i = 2; break;
+        case 'W': i = 3; break;
+        case 'G': i = 4; break;
       }
+      if (i < 5) { writeServo(i, v); hasMotionCmd = true; }
     }
     s = cm + 1;
   }
-  if (hasMotionCmd) {
-    armOutputs();
-    applyServos();
-  }
+  if (hasMotionCmd) armOutputs();
 }
 
-// ── Setup ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
   Wire.begin();
@@ -339,47 +367,28 @@ void setup() {
   pwm.setOscillatorFrequency(27000000);
   pwm.setPWMFreq(SERVO_FREQ);
   delay(10);
-  disableServoSignals();  // arranque mudo hasta la primera orden web
-  _lastTick = millis();
-  Serial.println("READY IPN-RoboArm v4.0");
+  disableServoSignals();
+  Serial.println("READY IPN-RoboArm v5.0");
 }
 
-// ── Loop ──────────────────────────────────────────────────────
 void loop() {
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\\n') { parseCmd(buf); buf = ""; }
-    else if (buf.length() < 64) buf += c;
+    else if (buf.length() < 96) buf += c;
   }
-
   unsigned long now = millis();
-  if (now - _lastTick >= 5) {
-    float dt = constrain((now - _lastTick) / 1000.0f, 0.0f, 0.02f);
-    _lastTick = now;
-
-    bool any = false;
-    for (uint8_t i = 0; i < 5; i++) {
-      if (sv[i].t > 0) {
-        sv[i].t -= dt;
-        if (sv[i].t <= 0) { sv[i].t = 0; sv[i].d = 0; }
-        else any = true;
-      }
-    }
-    applyServos();
-    // AT_POS: un latido "sin movimiento" cada 500 ms como máximo.
-    // Antes se enviaba a 100 Hz y saturaba el canal serial + la UI.
-    if (!any && now - _lastAtPos >= 500) {
-      Serial.println("AT_POS");
-      _lastAtPos = now;
-    }
+  if (outputsEnabled && now - _lastAtPos >= 800) {
+    Serial.println("AT_POS");
+    _lastAtPos = now;
   }
 }`;
 }
 
-/* ══════════════════════════════════ GESTIÓN DEL MAPA DE CANALES ══════════════════════════════════ */
 
-/** Valida que no haya canales duplicados. Devuelve null si OK,
-    o un mensaje de error si hay conflicto. */
+/* ══════════════════════════════════════════════
+   GESTIÓN DEL MAPA DE CANALES
+   ══════════════════════════════════════════════ */
 function validateChannels() {
   const used = {};
   for (const [servo, ch] of Object.entries(chanMap)) {
@@ -393,7 +402,6 @@ function validateChannels() {
   return null;
 }
 
-/** Lee los selects del DOM y actualiza chanMap */
 function readChannelsFromUI() {
   ['base','sho','elb','wri','grip'].forEach(k => {
     const el = document.getElementById('chan-' + k);
@@ -401,7 +409,6 @@ function readChannelsFromUI() {
   });
 }
 
-/** Aplica chanMap a los selects del DOM */
 function applyChannelsToUI() {
   ['base','sho','elb','wri','grip'].forEach(k => {
     const el = document.getElementById('chan-' + k);
@@ -409,33 +416,26 @@ function applyChannelsToUI() {
   });
 }
 
-/** Actualiza el status de validación y el firmware */
 function refreshChannelStatus() {
-  const err    = validateChannels();
-  const okEl   = document.getElementById('chan-ok');
-  const fwEl   = document.getElementById('fw');
+  const err  = validateChannels();
+  const okEl = document.getElementById('chan-ok');
+  const fwEl = document.getElementById('fw');
 
   if (okEl) {
     if (err) {
-      okEl.textContent    = err;
-      okEl.style.color    = 'var(--err)';
+      okEl.textContent = err;
+      okEl.style.color = 'var(--err)';
     } else {
-      okEl.textContent    = '✓ Configuración válida — firmware actualizado';
-      okEl.style.color    = 'var(--ok)';
+      okEl.textContent = '✓ Configuración válida — firmware actualizado';
+      okEl.style.color = 'var(--ok)';
     }
   }
 
-  // Regenerar firmware con los canales actuales
   if (fwEl) fwEl.textContent = generateFirmware();
-
-  // Actualizar números de canal en la tabla de telemetría
   updateTelemChannels();
-
-  // Actualizar el log inicial
   refreshChanLog();
 }
 
-/** Actualiza las celdas de canal en la tabla de telemetría */
 function updateTelemChannels() {
   ['base','sho','elb','wri','grip'].forEach(k => {
     const el = document.getElementById('stg-' + k + '-ch');
@@ -443,23 +443,17 @@ function updateTelemChannels() {
   });
 }
 
-/** Refresca el mensaje de canales en la consola serial */
 function refreshChanLog() {
   const parts = ['base','sho','elb','wri','grip']
     .map(k => `CH${chanMap[k]}=${SERVO_META[k].label}`)
     .join('  ');
-  // Solo actualizar el último mensaje de canales (no duplicar)
   const slogEl = document.getElementById('slog');
   if (slogEl) {
-    // Buscar si ya hay una línea de canales y actualizarla
     const existing = slogEl.querySelector('.chan-log-line');
-    if (existing) {
-      existing.textContent = '[canales] ' + parts;
-    }
+    if (existing) existing.textContent = '[canales] ' + parts;
   }
 }
 
-/** Guarda chanMap en localStorage y refresca todo */
 function saveChannels() {
   readChannelsFromUI();
   const err = validateChannels();
@@ -471,7 +465,6 @@ function saveChannels() {
     .map(k=>`CH${chanMap[k]}=${SERVO_META[k].label}`).join(' '), 's-sy');
 }
 
-/** Restablece chanMap a los valores por defecto */
 function resetChannels() {
   chanMap = { ...CHAN_DEFAULTS };
   applyChannelsToUI();
@@ -479,27 +472,46 @@ function resetChannels() {
   log('Canales restablecidos a valores por defecto', 'info');
 }
 
-/* ══════════════════════════════════ COMUNICACIÓN SERIAL ══════════════════════════════════ */
+
+/* ══════════════════════════════════════════════
+   COMUNICACIÓN SERIAL
+   ══════════════════════════════════════════════ */
 let port=null, writer=null, reader=null;
 let serialHz=20, serialT=null;
 let pktCount=0, lastTxMs=0;
 let _pendingPort=null;
-let _readyTimer=null;        // fallback si Arduino no envía READY
-let _pingTimer=null;         // timeout de espera de PONG
-let _uploadAfterReady=false; // flag: subir firmware al recibir READY
-let _serverAvail=false;      // servidor arduino-cli disponible
-let _uploadInFlight=false;   // evita subidas duplicadas / carreras
-let _ignoreHotplugDuringUpload=false; // ignora hotplug mientras se flashea
-let _reconnectAfterUploadTimer=null;  // reintentos tras subir firmware
-let _idleSyncInFlight=null;  // secuencia de reposo seguro tras READY/PONG
+let _readyTimer=null;
+let _pingTimer=null;
+let _uploadAfterReady=false;
+let _serverAvail=false;
+let _uploadInFlight=false;
+let _ignoreHotplugDuringUpload=false;
+let _reconnectAfterUploadTimer=null;
+let _idleSyncInFlight=null;
 const _rxWaiters = [];
 const READY_TIMEOUT_MS = 1200;
 const PING_TIMEOUT_MS  = 1200;
 
-/* ── Banner de auto-conexión ────────────────────────────────────────────── */
+function _serialPortLabel(serialPort) {
+  try {
+    const info = serialPort?.getInfo?.();
+    const vid = info?.usbVendorId;
+    const pid = info?.usbProductId;
+    if (vid && pid) {
+      return `USB ${vid.toString(16).toUpperCase()}:${pid.toString(16).toUpperCase()}`;
+    }
+  } catch(e) {}
+  return '';
+}
+
 function showAutoConnectBanner(serialPort) {
   _pendingPort = serialPort;
   const b = document.getElementById('auto-connect-banner');
+  const msg = document.getElementById('banner-msg');
+  const label = _serialPortLabel(serialPort);
+  if (msg) msg.textContent = label
+    ? `Arduino detectado (${label}) — elige cómo continuar`
+    : 'Arduino detectado — elige cómo continuar';
   if (b) b.classList.add('visible');
 }
 
@@ -509,7 +521,6 @@ function hideAutoConnectBanner() {
   _pendingPort = null;
 }
 
-/* ── Fallback: si no llega READY en 3 s, envía PING para verificar firmware ── */
 function _readyFallback() {
   clearTimeout(_readyTimer);
   clearTimeout(_pingTimer);
@@ -517,7 +528,6 @@ function _readyFallback() {
     if (!port) return;
     log('Sin confirmación inicial — verificando la comunicación del equipo…', 'info');
     sendRaw('PING');
-    // Si no llega PONG pronto → el firmware no es el correcto
     _pingTimer = setTimeout(() => {
       if (port && !serialT) {
         if (_uploadAfterReady) {
@@ -538,7 +548,6 @@ function _readyFallback() {
   }, READY_TIMEOUT_MS);
 }
 
-/* Abre un puerto tolerando el caso "ya está abierto" (restos de sesión previa). */
 async function _safeOpenPort(p) {
   const withTimeout = (pr, ms, msg) => Promise.race([
     pr,
@@ -553,7 +562,6 @@ async function _safeOpenPort(p) {
     await tryOpen();
   } catch (e) {
     if (/already open|InvalidStateError/i.test(e.message || '')) {
-      // Forzar cierre con timeout para no bloquearse
       try { await withTimeout(p.close(), 1500, 'timeout close'); } catch {}
       await new Promise(r => setTimeout(r, 300));
       await tryOpen();
@@ -563,9 +571,6 @@ async function _safeOpenPort(p) {
   }
 }
 
-/* ── Conectar directamente a un puerto ya autorizado ─────────────────── */
-// `opts.suppressFallback` evita el READY/PING agresivo cuando estamos
-// validando una reconexión automática después de flashear.
 async function autoConnectPort(serialPort, opts = false) {
   if (port) return;
   const suppressFallback = !!(opts && typeof opts === 'object' && opts.suppressFallback);
@@ -579,10 +584,8 @@ async function autoConnectPort(serialPort, opts = false) {
       ? `USB 0x${info.usbProductId.toString(16).toUpperCase()}` : 'USB Serial';
     const st = document.getElementById('serial-txt');
     if (st) st.textContent = 'Conectado @ 115200 baud';
-    setConnStatus(true);   // Botón cambia a "Desconectar" inmediatamente
+    setConnStatus(true);
     hideAutoConnectBanner();
-    // Conectar sin forzar subida: la carga del firmware solo ocurre si el
-    // usuario la pidió explícitamente.
     slog('Puerto abierto @ 115200 baud — esperando READY…');
     startReader();
     if (!suppressFallback) _readyFallback();
@@ -593,30 +596,28 @@ async function autoConnectPort(serialPort, opts = false) {
   }
 }
 
-/** Construye el string de comando TX desde el estado J actual.
-    El protocolo siempre usa B:/H:/C:/W:/G: — los canales solo
-    afectan al firmware (los #define CH_*). */
+/** Construye comando de POSICIÓN: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0" */
 function buildCmd() {
-  // Precisión 3 decimales: con .toFixed(2), comandos < 5 ms se truncan a "0.00"
-  // y el firmware los ignora — por eso el hombro no se movía en correcciones finas.
   return [
-    `B:${clamp(J.base.v, -10, 10).toFixed(3)}`,
-    `H:${clamp(J.sho.v,  -10, 10).toFixed(3)}`,
-    `C:${clamp(J.elb.v,  -10, 10).toFixed(3)}`,
-    `W:${clamp(J.wri.v,  -10, 10).toFixed(3)}`,
-    `G:${clamp(J.grip.v, -10, 10).toFixed(3)}`,
+    `B:${clampJointDeg('base', J.base.target).toFixed(1)}`,
+    `H:${clampJointDeg('sho',  J.sho.target ).toFixed(1)}`,
+    `C:${clampJointDeg('elb',  J.elb.target ).toFixed(1)}`,
+    `W:${clampJointDeg('wri',  J.wri.target ).toFixed(1)}`,
+    `G:${clampJointDeg('grip', J.grip.target).toFixed(1)}`,
   ].join(',');
 }
 
-/* ── Telemetría (servos de velocidad: valores en segundos) ─── */
+
+/* ── Telemetría ──────────────────────────────────────────────── */
 let _prevJ = {};
 
 function updateTelemetry() {
   ['base','sho','elb','wri','grip'].forEach(k => {
     const j   = J[k];
-    const lbl = `${j.angPos.toFixed(0)}° → ${j.target.toFixed(0)}°`;
-    const pw  = velPWM(j.v, k);
-    const pct = (clamp(j.angPos, -j.angLim, j.angLim) + j.angLim) / (2 * j.angLim) * 100;
+    const ang = j.angPos;
+    const lbl = `${ang.toFixed(0)}° → ${j.target.toFixed(0)}°`;
+    const pw  = angleToPwm(k, ang);
+    const pct = (clamp(ang, -j.angLim, j.angLim) + j.angLim) / (2 * j.angLim) * 100;
     const aEl = document.getElementById('stg-'+k+'-ang');
     const pEl = document.getElementById('stg-'+k+'-pwm');
     const bEl = document.getElementById('stg-'+k+'-bar');
@@ -640,14 +641,8 @@ function updateTelemetry() {
 })();
 updateTelemetry();
 
-/* ── Consola serial ───────────────────────────────────────────
-   Problema anterior: innerHTML += en cada mensaje re-parseaba toda
-   la consola (hasta 300 <div>s). Con el firmware enviando AT_POS
-   a 100 Hz y sendPos a 20 Hz la página quedaba congelada ~20% del
-   tiempo solo por reflows del DOM.
-   Solución: cola de mensajes + flush en un rAF + deduplicado de
-   mensajes idénticos consecutivos ("× N"). Usa fragment para añadir
-   en un solo reflow. */
+
+/* ── Consola serial ──────────────────────────────────────────── */
 const _slogBuf        = [];
 let   _slogFlushPend  = false;
 let   _slogLastKey    = '';
@@ -658,7 +653,6 @@ const SLOG_MAX        = 300;
 
 function slog(msg, cls='s-sy') {
   const key = cls + '|' + msg;
-  // Dedupe: si el último mensaje fue idéntico, solo incrementa contador
   if (key === _slogLastKey && _slogLastDiv) {
     _slogLastCount++;
     _slogLastDiv.textContent = _slogLastBase + ' (×' + _slogLastCount + ')';
@@ -675,10 +669,9 @@ function slog(msg, cls='s-sy') {
 
 function _fmtTime(ms) {
   const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2,'0');
-  const mm = String(d.getMinutes()).padStart(2,'0');
-  const ss = String(d.getSeconds()).padStart(2,'0');
-  return hh + ':' + mm + ':' + ss;
+  return String(d.getHours()).padStart(2,'0') + ':' +
+         String(d.getMinutes()).padStart(2,'0') + ':' +
+         String(d.getSeconds()).padStart(2,'0');
 }
 
 function _flushSlog() {
@@ -700,17 +693,16 @@ function _flushSlog() {
   el.appendChild(frag);
   _slogLastDiv  = last;
   _slogLastBase = lastBase;
-  // Recorte en lote (una sola pasada en lugar de while)
   const over = el.children.length - SLOG_MAX;
   if (over > 0) {
     for (let i = 0; i < over; i++) el.removeChild(el.firstChild);
-    // si eliminamos el div del último mensaje, resetear dedupe
     if (!el.contains(_slogLastDiv)) { _slogLastDiv = null; _slogLastKey = ''; }
   }
   el.scrollTop = el.scrollHeight;
 }
 
-/* ── Envío ──────────────────────────────────────────────────── */
+
+/* ── Envío ───────────────────────────────────────────────────── */
 async function sendRaw(cmd) {
   if (!writer) return;
   try {
@@ -724,11 +716,10 @@ async function sendRaw(cmd) {
     disconnectSerial();
   }
 }
-let _lastSentCmd = null;   // null = nunca enviado
+
+let _lastSentCmd = null;
 let _lastSendMs  = 0;
 
-/** Sincroniza _lastSentCmd con la posición actual sin enviar nada al Arduino.
- *  Llamar después de cambios de calibración para que no disparen envío automático. */
 function syncLastCmd() { _lastSentCmd = buildCmd(); _lastSendMs = performance.now(); }
 
 function _sleepMs(ms) {
@@ -775,13 +766,17 @@ async function ensureSafeIdle(source = 'serial') {
   _idleSyncInFlight = (async () => {
     clearInterval(serialT); serialT = null;
     stopNeuRefresh();
-    if (typeof cancelAllQueuedMoves === 'function') cancelAllQueuedMoves();
 
-    // Empuja varias veces el neutro y HOME para vencer inercia/deriva inicial.
-    for (let i = 0; i < 3; i++) {
+    // Empuja varios envíos de calibración para vencer ruido inicial.
+    for (let i = 0; i < 2; i++) {
       try {
         await sendNeutrals();
-        await waitSerialLine(line => line.startsWith('OK NEU'), 350);
+        await waitSerialLine(line => line.startsWith('OK Z'), 350);
+      } catch {}
+
+      try {
+        await sendCalibLimits();
+        await waitSerialLine(line => line.startsWith('OK LIM'), 350);
       } catch {}
 
       try {
@@ -791,11 +786,6 @@ async function ensureSafeIdle(source = 'serial') {
 
       await _sleepMs(120);
     }
-
-    try {
-      await sendSpeedProfile();
-      await waitSerialLine(line => line.startsWith('OK SPD'), 350);
-    } catch {}
 
     if (typeof resetAngPos === 'function') resetAngPos();
     _lastSentCmd = buildCmd();
@@ -809,38 +799,30 @@ async function ensureSafeIdle(source = 'serial') {
   return _idleSyncInFlight;
 }
 
-/* Modelo de pulsos: cada ciclo de commit (160 ms) emite UN pulso
-   discreto. sendPos solo envía cuando el comando cambia: nunca
-   refresca el mismo pulso (causaba que el firmware reiniciase el
-   temporizador antes de que venciera el anterior → servo corría
-   en continuo). */
-const MIN_TX_MS = 40;
-// Durante el sostén re-enviamos antes de que venza el pulso para que sea continuo.
-const HOLD_TX_MS = 45;
+const MIN_TX_MS = 50;
+
+// PARO DE EMERGENCIA — flag global del lado de la página.
+// Mientras esté activo, sendPos() NO transmite ningún comando de
+// movimiento al firmware, sin importar lo que pidan los sliders, la
+// visión, los presets o el teclado. El firmware además recibió STOP
+// y descarta cualquier comando de movimiento que se le envíe.
+window.__emergencyStop = false;
 
 function sendPos() {
+  if (window.__emergencyStop) return;        // bloqueo total mientras hay STOP
   const now = performance.now();
   if (now - _lastSendMs < MIN_TX_MS) return;
 
   const cmd = buildCmd();
-  const holdTxMs =
-    typeof currentContinuousHoldResendMs === 'function'
-      ? (currentContinuousHoldResendMs() ?? HOLD_TX_MS)
-      : HOLD_TX_MS;
-  const keepHoldAlive =
-    typeof hasContinuousHoldAssist === 'function'
-      ? hasContinuousHoldAssist()
-      : (typeof hasActiveHoldAssist === 'function' && hasActiveHoldAssist());
-  if (cmd === _lastSentCmd) {
-    if (!keepHoldAlive || now - _lastSendMs < holdTxMs) return;
-  }
+  if (cmd === _lastSentCmd) return;
 
   _lastSentCmd = cmd;
   _lastSendMs  = now;
   sendRaw(cmd);
 }
 
-/* ── Estado visual ──────────────────────────────────────────── */
+
+/* ── Estado visual ───────────────────────────────────────────── */
 function setConnStatus(ok) {
   const ids = { dot:'ard-dot', lbl:'ard-ind-lbl', meta:'ard-meta',
                 btn:'btn-conn', chip:'st-serial' };
@@ -880,7 +862,8 @@ function setConnStatus(ok) {
   }
 }
 
-/* ── Reader asíncrono ───────────────────────────────────────── */
+
+/* ── Reader asíncrono ────────────────────────────────────────── */
 async function startReader() {
   reader = port.readable.getReader();
   const dec = new TextDecoder(); let rxBuf = '';
@@ -893,9 +876,6 @@ async function startReader() {
         const line = rxBuf.substring(0,nl).trim();
         rxBuf = rxBuf.substring(nl+1);
         if (!line) continue;
-        // AT_POS es un heartbeat "no hay movimiento" del firmware.
-        // Lo ignoramos por completo: no aporta info al humano y con el
-        // firmware viejo (100 Hz) causaba freezes al loguearlo a DOM.
         if (line === 'AT_POS') continue;
         _dispatchSerialWaiters(line);
         slog('← ' + line, 's-rx');
@@ -937,7 +917,8 @@ async function startReader() {
   } catch(e) { if (e.name!=='AbortError') slog('RX error: '+e.message,'s-er'); }
 }
 
-/* ── Conectar (con diálogo de selección de puerto) ──────────────────── */
+
+/* ── Conectar (con diálogo de selección de puerto) ──────────── */
 async function connectSerial() {
   if (!('serial' in navigator)) {
       modal('Conexión USB no disponible',
@@ -945,7 +926,6 @@ async function connectSerial() {
     return;
   }
   try {
-    // Si ya hay un puerto abierto, desconectar limpio antes de volver a pedir uno
     if (port) { try { await disconnectSerial(); } catch {} }
     port = await navigator.serial.requestPort();
     await _safeOpenPort(port);
@@ -958,8 +938,7 @@ async function connectSerial() {
     if (st) st.textContent = 'Conectado a 115200 baud';
     slog('Puerto abierto — esperando confirmación del equipo…');
     log('Conexión USB establecida', 'ok');
-    setConnStatus(true);   // Botón cambia a "Desconectar" inmediatamente
-    // No subir firmware automáticamente al conectar.
+    setConnStatus(true);
     _readyFallback();
     startReader();
   } catch(e) {
@@ -968,9 +947,8 @@ async function connectSerial() {
   }
 }
 
-/* ── Desconectar ────────────────────────────────────────────── */
-// Promise.race con timeout: evita que reader.cancel()/port.close() cuelguen
-// la pestaña si el driver USB se queda pillado (causa típica de freezes).
+
+/* ── Desconectar ─────────────────────────────────────────────── */
 function _withTimeout(pr, ms) {
   return Promise.race([
     pr,
@@ -1005,18 +983,101 @@ async function disconnectSerial() {
   slog('Desconectado'); log('Serial desconectado', 'info');
 }
 
-/* ── Parada de emergencia ───────────────────────────────────── */
+
+/* ──────────────────────────────────────────────────────────────
+   PARO DE EMERGENCIA — comportamiento SEGURO
+   ────────────────────────────────────────────────────────────────
+   Filosofía:
+   • NUNCA mover los servos a un "neutro" o a "0°" porque podría no
+     estar bien calibrado. Los servos se quedan EXACTAMENTE donde
+     estén en este instante.
+   • NO se limita a parar la transmisión PWM dejando al Arduino con
+     comandos viejos pendientes — al enviar STOP, el firmware ENTRA
+     en estado "frozen" y descarta cualquier comando de movimiento.
+   • La página también levanta un flag global (window.__emergencyStop)
+     para que ningún módulo (manual, visión, presets, teclado) pueda
+     emitir ningún movimiento hasta que el operador reanude.
+   • Si el equipo no está conectado, el bloqueo aún se aplica al lado
+     de la página para impedir movimientos al reconectar.
+   ────────────────────────────────────────────────────────────── */
 async function emergencyStop() {
-  if (!writer) return;
-  clearInterval(serialT); serialT=null;
-  await sendRaw('HOME');
-  JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
-  if (typeof resetAngPos === 'function') resetAngPos();
-  log('⚠ STOP — servos en HOME de referencia', 'err');
+  // 1) Bloqueo del lado de la página — fuerza que TODOS los módulos
+  //    se queden quietos en su estimación angular actual.
+  window.__emergencyStop = true;
+  JDEFS.forEach(d => {
+    setJointTarget(d.key, J[d.key].angPos);
+    if (J[d.key]) J[d.key].target = J[d.key].angPos;
+  });
+
+  // 2) Bloqueo del lado del firmware — STOP fija las PWM actuales y
+  //    rechaza cualquier comando de movimiento posterior.
+  if (writer) {
+    try {
+      // Enviamos varias veces por si la primera se pierde por ruido.
+      await sendRaw('STOP');
+      await _sleepMs(40);
+      await sendRaw('STOP');
+    } catch {}
+  }
+
+  // 3) Detenemos el envío periódico para que la cola serial no esté
+  //    ocupada con comandos que el firmware igual descartaría.
+  clearInterval(serialT); serialT = null;
+
+  // 4) Feedback visual
+  document.body.classList.add('estop-active');
+  const stopBtn = document.getElementById('btn-global-stop');
+  if (stopBtn) stopBtn.classList.add('estop-armed');
+  log('⛔ PARO DE EMERGENCIA — servos congelados en su posición actual', 'err');
+  slog('STOP global enviado al firmware (frozen)', 's-er');
 }
 
-/* ── Presets ────────────────────────────────────────────────── */
-const PRESET_KEY = 'roboarm-presets-v10';
+/** Reanuda la operación normal después de un PARO. NO mueve los servos. */
+async function resumeOperation() {
+  window.__emergencyStop = false;
+  if (writer) {
+    try {
+      await sendRaw('RESUME');
+    } catch {}
+  }
+  // Reanudar el envío periódico
+  if (writer && !serialT) {
+    serialT = setInterval(sendPos, Math.round(1000 / serialHz));
+  }
+  document.body.classList.remove('estop-active');
+  const stopBtn = document.getElementById('btn-global-stop');
+  if (stopBtn) stopBtn.classList.remove('estop-armed');
+  log('Operación reanudada — los servos vuelven a aceptar comandos', 'ok');
+}
+
+/** HOME global — accesible desde cualquier pestaña. Reanuda primero
+ *  si el sistema estaba en PARO, luego mueve cada servo a su HOME
+ *  calibrado (NO a 0° fijo, sino al HOME que el usuario configuró). */
+async function globalHome() {
+  // Si estábamos en PARO, primero reanudamos el firmware.
+  if (window.__emergencyStop) {
+    await resumeOperation();
+  }
+  // Mover a la pose HOME del usuario (validada y persistida)
+  if (typeof moveToHomePose === 'function') {
+    moveToHomePose();
+  } else {
+    JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
+  }
+  // Forzar transmisión inmediata
+  _lastSentCmd = null;
+  if (writer) sendPos();
+  log('⌂ HOME — moviendo a la posición base calibrada', 'ok');
+}
+
+// Exponer globalmente para que cualquier módulo o botón pueda llamarlas.
+window.emergencyStop    = emergencyStop;
+window.resumeOperation  = resumeOperation;
+window.globalHome       = globalHome;
+
+
+/* ── Presets ─────────────────────────────────────────────────── */
+const PRESET_KEY = 'roboarm-presets-v11';
 let presets = JSON.parse(localStorage.getItem(PRESET_KEY) || '{}');
 
 function savePreset(slot) {
@@ -1024,10 +1085,8 @@ function savePreset(slot) {
   if (!name || !name.value.trim()) { log('Escribe un nombre para el preset','err'); return; }
   presets[slot] = {
     name: name.value.trim(),
-    base: J.base.target,
-    sho:  J.sho.target,
-    elb:  J.elb.target,
-    wri:  J.wri.target,
+    base: J.base.target, sho:  J.sho.target,
+    elb:  J.elb.target,  wri:  J.wri.target,
     grip: J.grip.target,
   };
   localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
@@ -1058,11 +1117,12 @@ function renderPresets() {
 }
 renderPresets();
 
-/* ── Sweep de servo (prueba de rango) ───────────────────────── */
+
+/* ── Sweep de servo (prueba de rango) ────────────────────────── */
 function sweepServo(key) {
   if (!writer) { log('Conecta primero el serial','err'); return; }
-  const mn = J[key].calMin;
-  const mx = J[key].calMax;
+  const mn = jointMin(key);
+  const mx = jointMax(key);
   let i = 0, steps = 10;
   const iv = setInterval(() => {
     const v = i < steps ? lerp(mn, mx, i / steps) : lerp(mx, mn, (i - steps) / steps);
@@ -1071,11 +1131,13 @@ function sweepServo(key) {
       clearInterval(iv);
       setJointTarget(key, (mn + mx) / 2);
     }
-  }, COMMIT_MS);
+  }, 200);
 }
 
-/* ══════════════════════════════════ SUBIDA DE FIRMWARE ══════════════════════════════════ */
 
+/* ══════════════════════════════════════════════
+   SUBIDA DE FIRMWARE
+   ══════════════════════════════════════════════ */
 async function checkServer() {
   try {
     const r = await fetch('http://localhost:8080/status',
@@ -1088,7 +1150,7 @@ async function checkServer() {
 
 function updateUploadUI() {
   const bannerBtn = document.getElementById('banner-btn-upload');
-  if (bannerBtn) bannerBtn.style.display = '';  // siempre visible
+  if (bannerBtn) bannerBtn.style.display = '';
   const tabBtn = document.getElementById('btn-upload-fw');
   if (tabBtn) {
     tabBtn.disabled  = false;
@@ -1097,12 +1159,10 @@ function updateUploadUI() {
       ? 'Cargar la configuración al equipo con el servicio local disponible'
       : 'Haz clic para ver cómo habilitar la carga automática';
   }
-  // El botón de descarga siempre está disponible
   const dlBtn = document.getElementById('btn-dl-fw');
   if (dlBtn) dlBtn.style.display = '';
 }
 
-/** Muestra al usuario cómo iniciar el servidor de compilación. */
 function showServerHelp() {
   modal('Activa la carga automática desde la plataforma',
     'Para cargar la configuración del controlador sin salir de esta plataforma,\n' +
@@ -1130,8 +1190,6 @@ async function detectBoardInfo() {
 
 function shouldUseServerUploader(boardInfo) {
   const fqbn = String(boardInfo?.board || '').toLowerCase();
-  // El flasher Web Serial actual está afinado para UNO/Optiboot.
-  // Para Mega y placas detectadas distintas, arduino-cli es mucho más fiable.
   return !!fqbn && fqbn !== 'arduino:avr:uno';
 }
 
@@ -1244,7 +1302,6 @@ async function uploadFirmware() {
     return;
   }
   if (!_serverAvail) {
-    // Re-verificar (por si el usuario acaba de abrir start-server.bat)
     await checkServer();
     if (!_serverAvail) {
       showServerHelp();
@@ -1264,10 +1321,8 @@ async function uploadFirmware() {
   const boardInfo = await detectBoardInfo();
   const useServerDirect = shouldUseServerUploader(boardInfo);
 
-  // Guardar referencia al puerto antes de desconectar
   let flashPort = port;
   if (!useServerDirect && !flashPort) {
-    // Intentar con un puerto ya autorizado (si lo hay) para no forzar conexión previa
     const ports = await navigator.serial.getPorts();
     if (ports.length === 0) {
       _uploadInFlight = false;
@@ -1279,7 +1334,6 @@ async function uploadFirmware() {
   }
 
   try {
-    // Liberar el puerto del navegador antes de cualquier intento de subida.
     await disconnectSerial();
     await new Promise(r => setTimeout(r, 350));
 
@@ -1289,7 +1343,6 @@ async function uploadFirmware() {
       slog(`Equipo detectado: ${boardLbl} — iniciando carga asistida`, 's-sy');
       await uploadViaServer(inoSource, boardInfo);
     } else {
-      // 1. Compilar firmware en el servidor
       log('Preparando archivo de control…', 'info');
       slog('Preparando archivo con arduino-cli…', 's-sy');
       let hex;
@@ -1298,7 +1351,7 @@ async function uploadFirmware() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ino: inoSource, fqbn: boardInfo?.board || 'arduino:avr:uno' }),
-          signal: AbortSignal.timeout(60000),   // compile puede tardar, pero no infinito
+          signal: AbortSignal.timeout(60000),
         });
         const d = await r.json();
         if (!d.ok) {
@@ -1315,7 +1368,6 @@ async function uploadFirmware() {
         return;
       }
 
-      // 2. Subir hex desde el browser via STK500/Optiboot (flasher.js)
       try {
         await flashArduino(flashPort, hex, pct => {
           const pEl = document.getElementById('upload-progress');
@@ -1343,36 +1395,35 @@ async function uploadFirmware() {
   }
 }
 
-/* ══════════════════════════════════ LISTENERS ══════════════════════════════════ */
 
-// Serial
-document.getElementById('btn-conn').addEventListener('click',
-  () => {
-    if (port) { disconnectSerial(); return; }
-    _uploadAfterReady = false;
-    connectSerial();
-  });
-document.getElementById('btn-home-ser').addEventListener('click',
-  () => {
-    JDEFS.forEach(d => setJointTarget(d.key, getJointHome(d.key)));
-    if (typeof resetAngPos === 'function') resetAngPos();
-    sendRaw('HOME');
-    log('HOME enviado — referencia angular reiniciada al HOME guardado','ok');
-  });
-document.getElementById('btn-ping').addEventListener('click',
-  () => sendRaw('PING'));
+/* ══════════════════════════════════════════════
+   LISTENERS
+   ══════════════════════════════════════════════ */
+
+document.getElementById('btn-conn').addEventListener('click', () => {
+  if (port) { disconnectSerial(); return; }
+  _uploadAfterReady = false;
+  connectSerial();
+});
+
+document.getElementById('btn-home-ser').addEventListener('click', () => globalHome());
+
+document.getElementById('btn-ping').addEventListener('click', () => sendRaw('PING'));
 document.getElementById('btn-emergency').addEventListener('click', emergencyStop);
-document.getElementById('btn-send-raw').addEventListener('click',
-  () => { const v=document.getElementById('inp-cmd').value.trim(); if(v) sendRaw(v); });
-document.getElementById('inp-cmd').addEventListener('keydown',
-  e => { if(e.key==='Enter') { const v=e.target.value.trim(); if(v) sendRaw(v); } });
-document.getElementById('btn-clr').addEventListener('click',
-  () => {
-    document.getElementById('slog').innerHTML='';
-    _slogLastDiv = null; _slogLastKey = ''; _slogLastCount = 0;
-  });
 
-// Firmware copy
+document.getElementById('btn-send-raw').addEventListener('click', () => {
+  const v=document.getElementById('inp-cmd').value.trim(); if(v) sendRaw(v);
+});
+
+document.getElementById('inp-cmd').addEventListener('keydown', e => {
+  if(e.key==='Enter') { const v=e.target.value.trim(); if(v) sendRaw(v); }
+});
+
+document.getElementById('btn-clr').addEventListener('click', () => {
+  document.getElementById('slog').innerHTML='';
+  _slogLastDiv = null; _slogLastKey = ''; _slogLastCount = 0;
+});
+
 document.getElementById('btn-copy-fw').addEventListener('click', () =>
   navigator.clipboard.writeText(document.getElementById('fw').textContent || generateFirmware())
     .then(() => log('Firmware copiado al portapapeles ✓','ok'))
@@ -1380,27 +1431,20 @@ document.getElementById('btn-copy-fw').addEventListener('click', () =>
 );
 
 // Frecuencia de transmisión
-document.getElementById('sl-hz').addEventListener('input', function() {
+const _hzSl = document.getElementById('sl-hz');
+if (_hzSl) _hzSl.addEventListener('input', function() {
   serialHz = parseInt(this.value);
   document.getElementById('lv-hz').textContent = serialHz + ' Hz';
   if (serialT) { clearInterval(serialT); serialT=setInterval(sendPos, Math.round(1000/serialHz)); }
 });
 
-// Velocidad de servos
-document.getElementById('sl-spd').addEventListener('input', function() {
-  const spd = parseFloat(this.value);
-  const applied = applySpeedProfile(spd);
-  document.getElementById('lv-spd').textContent = applied + ' °/s';
-  if (writer) sendSpeedProfile();
-});
-
 // Auto-inicio
-document.getElementById('chk-autostart').addEventListener('change', function() {
+const _autoChk = document.getElementById('chk-autostart');
+if (_autoChk) _autoChk.addEventListener('change', function() {
   log('Auto-inicio: '+(this.checked?'activado':'desactivado'),'info');
 });
 
-// Sliders espejo del panel Arduino: permiten probar cada canal sin cambiar
-// el modelo mental del resto de la UI, que también trabaja en grados.
+// Sliders espejo del panel Arduino
 ['base','sho','elb','wri','grip'].forEach(k => {
   const sl = document.getElementById('ard-sl-'+k);
   if (sl) sl.addEventListener('input', function() {
@@ -1414,20 +1458,16 @@ document.getElementById('chk-autostart').addEventListener('change', function() {
   if (btn) btn.addEventListener('click', () => sweepServo(k));
 });
 
-/* ── Listeners de asignación de canales ─────────────────────── */
-
 // Cambio en cualquier select de canal → validar en tiempo real
 document.querySelectorAll('.chan-sel').forEach(sel => {
   sel.addEventListener('change', () => {
     readChannelsFromUI();
     const err = validateChannels();
-    // Marcar filas con conflicto en rojo
     ['base','sho','elb','wri','grip'].forEach(k => {
       const row = document.getElementById('chanrow-'+k);
       if (row) row.classList.remove('chan-conflict');
     });
     if (err) {
-      // Encontrar los dos servos en conflicto y marcarlos
       const used = {};
       ['base','sho','elb','wri','grip'].forEach(k => {
         const ch = chanMap[k];
@@ -1445,17 +1485,46 @@ document.querySelectorAll('.chan-sel').forEach(sel => {
   });
 });
 
-// Botón Guardar canales
 document.getElementById('btn-chan-save').addEventListener('click', saveChannels);
-
-// Botón Restablecer canales
 document.getElementById('btn-chan-reset').addEventListener('click', resetChannels);
 
-/* ══════════════════════════════════ INICIALIZACIÓN ══════════════════════════════════ */
+/* ── Botones GLOBALES de emergencia y HOME ─────────────────────
+   Son visibles en TODO momento (pestañas, móvil, sin importar el
+   tab activo). El STOP funciona aunque no haya equipo conectado:
+   bloquea cualquier intento de movimiento desde la página. */
+const _btnGlobalStop = document.getElementById('btn-global-stop');
+const _btnGlobalHome = document.getElementById('btn-global-home');
+if (_btnGlobalStop) {
+  _btnGlobalStop.addEventListener('click', async () => {
+    // Si ya estamos en PARO, este botón actúa como "Reanudar".
+    if (window.__emergencyStop) {
+      await resumeOperation();
+      return;
+    }
+    await emergencyStop();
+  });
+}
+if (_btnGlobalHome) {
+  _btnGlobalHome.addEventListener('click', () => globalHome());
+}
 
-// Aplicar chanMap guardado a los selects
+/* Atajo de teclado: tecla ESPACIO también dispara PARO global.
+   Bypass de cualquier widget para máxima accesibilidad. */
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space') return;
+  // Permitir uso normal de espacio dentro de campos de texto.
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  e.preventDefault();
+  if (window.__emergencyStop) resumeOperation();
+  else emergencyStop();
+}, true);
+
+
+/* ══════════════════════════════════════════════
+   INICIALIZACIÓN
+   ══════════════════════════════════════════════ */
 applyChannelsToUI();
-// Generar firmware inicial y actualizar telemetría
 refreshChannelStatus();
 updateTelemetry();
 updateTelemChannels();
@@ -1475,23 +1544,16 @@ document.getElementById('banner-btn-upload').addEventListener('click', () => {
   hideAutoConnectBanner();
 });
 
-// Botón de subida de firmware en tab Arduino
 const _uploadBtn = document.getElementById('btn-upload-fw');
 if (_uploadBtn) _uploadBtn.addEventListener('click', uploadFirmware);
 
-// Auto-detección de Arduino (solo hot-plug — no probing síncrono en load)
-// La idea es sugerir conexión sin bloquear el render inicial de la página.
 if ('serial' in navigator) {
-  // Al cargar: si hay un puerto autorizado, mostrar banner SIN abrir el puerto
-  // (abrir/cerrar probe bloquea el hilo principal varios segundos en Windows)
   navigator.serial.getPorts().then(ports => {
     if (ports.length > 0 && !port) {
-      // Pequeño delay para no competir con el render inicial
       setTimeout(() => { if (!port) showAutoConnectBanner(ports[0]); }, 400);
     }
   }).catch(() => {});
 
-  // Enchufe en caliente → banner (no auto-conexión directa para evitar cascadas)
   navigator.serial.addEventListener('connect', e => {
     if (_ignoreHotplugDuringUpload) return;
     if (!port) showAutoConnectBanner(e.target);
@@ -1506,23 +1568,13 @@ if ('serial' in navigator) {
   });
 }
 
-// Seleccionar 115200 en el dropdown (matching al firmware)
 const _baudSel = document.getElementById('sel-baud');
 if (_baudSel) _baudSel.value = '115200';
 
-const _spdSel = document.getElementById('sl-spd');
-if (_spdSel) {
-  _spdSel.value = String(applySpeedProfile(parseFloat(_spdSel.value) || DEFAULT_SPEED_DPS));
-  const _spdLbl = document.getElementById('lv-spd');
-  if (_spdLbl) _spdLbl.textContent = speedDps + ' °/s';
-}
-
-// Verificar si el servidor arduino-cli está disponible
 checkServer();
-setInterval(checkServer, 10000); // Re-verificar cada 10 s
+setInterval(checkServer, 10000);
 
-// Mensajes de bienvenida en consola serial
-slog('Plataforma de control lista');
+slog('Plataforma de control lista — modo POSICIÓN MG995');
 const chanSummary = ['base','sho','elb','wri','grip']
   .map(k => `CH${chanMap[k]}=${SERVO_META[k].label}`).join('  ');
 slog(chanSummary, 's-sy');

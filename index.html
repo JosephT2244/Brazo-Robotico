@@ -16,10 +16,10 @@
 
 <!-- ─── BANNER AUTO-CONEXIÓN ──────────────────────────────── -->
 <div id="auto-connect-banner">
-  <span id="banner-msg">🔌 Equipo detectado — ¿Deseas conectar la plataforma?</span>
+  <span id="banner-msg">Arduino detectado — elige cómo continuar</span>
   <div class="banner-btns">
     <button id="banner-btn-connect" class="btn p">Conectar</button>
-    <button id="banner-btn-upload" class="btn gh" title="Conecta el equipo y carga la configuración del controlador">⬆ Conectar y Cargar Configuración</button>
+    <button id="banner-btn-upload" class="btn gh" title="Conecta el Arduino y sube el firmware generado">Conectar y subir firmware</button>
     <button id="banner-btn-ignore" class="btn">Ignorar</button>
 </div>
 </div>
@@ -29,11 +29,13 @@
 
 <!-- ─── HEADER ────────────────────────────────────────────── -->
 <header>
-  <div class="crest">IPN</div>
+  <div class="crest" aria-label="IPN Brazo Robótico">
+    <img src="Logo brazo robotico.png" alt="" width="38" height="38" />
+  </div>
   <div class="hdr-brand">
-    <div class="hdr-kicker">Plataforma de operación</div>
+    <div class="hdr-kicker">Plataforma de operación · IPN</div>
     <div class="hdr-title">Brazo Robótico de 5 Ejes</div>
-    <div class="hdr-sub">INSTITUTO POLITÉCNICO NACIONAL · SOLUCIÓN DE CONTROL Y MONITOREO</div>
+    <div class="hdr-sub">Instituto Politécnico Nacional · Control y monitoreo</div>
   </div>
   <div class="hdr-sep"></div>
   <div class="hdr-keys"><b>Atajos:</b> <b>Q/A</b> Base &ensp;<b>W/S</b> Hombro &ensp;<b>E/D</b> Codo &ensp;<b>R/F</b> Muñeca &ensp;<b>T/G</b> Pinza &ensp;<b>H</b> Ayuda</div>
@@ -135,6 +137,24 @@
     </div>
   </div>
 
+  <!-- ─── BOTONES GLOBALES (siempre visibles) ────────────────
+       PARO de emergencia y HOME. Disponibles desde cualquier
+       pestaña del sidebar y por encima de cualquier overlay. -->
+  <div id="global-actions" role="group" aria-label="Acciones críticas del equipo">
+    <button id="btn-global-stop" class="ga-btn ga-stop"
+            type="button"
+            title="PARO DE EMERGENCIA — congela todos los servos en su posición actual. NO los mueve a un neutro ni a 0°.">
+      <span class="ga-icon" aria-hidden="true"></span>
+      <span class="ga-lbl">PARO</span>
+    </button>
+    <button id="btn-global-home" class="ga-btn ga-home"
+            type="button"
+            title="HOME — lleva todos los servos a la posición base calibrada.">
+      <span class="ga-icon" aria-hidden="true">⌂</span>
+      <span class="ga-lbl">HOME</span>
+    </button>
+  </div>
+
   <!-- Consola visual del viewport para eventos rápidos de operación -->
   <div id="logbox"></div>
 </div><!-- /vp -->
@@ -147,31 +167,36 @@
     <div class="tab active" data-t="manual"><span class="tab-icon">⚙</span><span class="tab-lbl">CONTROL</span></div>
     <div class="tab" data-t="vision"><span class="tab-icon">◉</span><span class="tab-lbl">VISIÓN</span></div>
     <div class="tab" data-t="calib"><span class="tab-icon">⊞</span><span class="tab-lbl">AJUSTES</span></div>
-    <div class="tab" data-t="arduino"><span class="tab-icon">⚡</span><span class="tab-lbl">EQUIPO</span></div>
+    <div class="tab" data-t="arduino"><span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13.5" r="2"/><path d="M8.5 9.5a5 5 0 0 1 7 0"/><path d="M5 6a9 9 0 0 1 14 0"/><path d="M12 17v3"/></svg></span><span class="tab-lbl">EQUIPO</span></div>
   </div>
 
   <!-- ─── MANUAL ──────────────────────────────────────────── -->
   <div class="pane active" id="pane-manual">
     <div class="pane-hero">
       <div class="pane-hero-copy">
-        <div class="pane-hero-kicker">Operación centralizada</div>
+        <div class="pane-hero-kicker">Estación de operación · IPN RoboArm</div>
         <div class="pane-hero-title">Panel de control</div>
         <div class="pane-hero-text">
-          Supervisa posiciones, ajusta movimientos y opera el equipo desde una interfaz clara, confiable y lista para utilizarse.
+          Cinemática directa de 5 GDL sobre PCA9685. Comandos angulares
+          enviados al firmware vía Web Serial; clamp de seguridad por
+          servo y persistencia local de calibración.
         </div>
       </div>
-      <div class="pane-hero-stats">
-        <div class="pane-hero-stat">
-          <span class="pane-hero-value">5</span>
-          <span class="pane-hero-label">Ejes de control</span>
+      <div class="pane-hero-tech">
+        <div class="ph-stat">
+          <span class="ph-k">Bus</span>
+          <span class="ph-v">I²C 0x40</span>
+          <span class="ph-sub">PCA9685 · 50 Hz</span>
         </div>
-        <div class="pane-hero-stat">
-          <span class="pane-hero-value">En vivo</span>
-          <span class="pane-hero-label">Monitoreo</span>
+        <div class="ph-stat">
+          <span class="ph-k">Servo</span>
+          <span class="ph-v">MG995 · 180°</span>
+          <span class="ph-sub">posición · 5 ud</span>
         </div>
-        <div class="pane-hero-stat">
-          <span class="pane-hero-value">Precisión</span>
-          <span class="pane-hero-label">Ajuste asistido</span>
+        <div class="ph-stat">
+          <span class="ph-k">PWM</span>
+          <span class="ph-v">102 – 512</span>
+          <span class="ph-sub">2.28 ticks/°</span>
         </div>
       </div>
     </div>
@@ -190,8 +215,8 @@
       </div>
       <div class="jb" id="jb-elb">
         <div class="jr"><span class="jn">Codo — Flexión</span><span class="jk">E / D</span><span class="jv" id="lv-elb">■</span></div>
-        <input type="range" id="sl-elb" min="-30" max="30" value="0" step="1">
-        <div class="jlim"><span id="lm-elb-min">−30°</span><span id="lm-elb-max">+30°</span></div>
+        <input type="range" id="sl-elb" min="-22" max="22" value="0" step="1">
+        <div class="jlim"><span id="lm-elb-min">−22°</span><span id="lm-elb-max">+22°</span></div>
       </div>
       <div class="jb" id="jb-wri">
         <div class="jr"><span class="jn">Muñeca — Rotación axial</span><span class="jk">R / F</span><span class="jv" id="lv-wri">■</span></div>
@@ -217,7 +242,7 @@
         <div class="range-tags">
           <span class="range-tag">Base 180°</span>
           <span class="range-tag">Hombro 90°</span>
-          <span class="range-tag">Codo 60°</span>
+          <span class="range-tag">Codo 45°</span>
           <span class="range-tag">Muñeca 180°</span>
           <span class="range-tag">Pinza 60°</span>
         </div>
@@ -295,8 +320,13 @@
       <span class="pane-intro-kicker">Configuración operativa</span>
       <p>Ajusta rangos de trabajo y una posición base para mantener una operación consistente y segura.</p>
     </div>
-    <div class="sec">Límites de operación — MG995</div>
-    <div class="info">Define el rango mínimo y máximo de cada articulación para <span class="ac">proteger el sistema</span> durante la operación.</div>
+    <div class="sec">Límites y cero por servo — MG995 Hi-SPEED 180°</div>
+    <div class="info">
+      Para cada servo puedes restringir su <span class="ac">rango operativo (mín/máx)</span>
+      dentro del rango físico permitido (Base 180°, Hombro 90°, Codo 45°, Muñeca 180°, Pinza 60°)
+      y calibrar el <span class="ac">PWM del 0° lógico</span> para alinearlo con el cero mecánico real
+      del servo. Los cambios se aplican <span class="hl">en caliente</span>.
+    </div>
     <div id="calib-wrap"></div>
     <div class="sec">Posición base</div>
     <div class="info">
@@ -310,8 +340,12 @@
     </div>
     <button class="btn f" id="btn-reset-home" style="margin-top:2px">Restablecer posición base</button>
     <div class="sec">Acciones</div>
+    <button class="btn-keep" id="btn-save-forever" title="Conserva límites, cero PWM y posición base. Se restablecen al volver a abrir la página y se pueden modificar cuando quieras.">
+      <span class="lbl">Conservar ajustes</span>
+      <span class="hint">persistente</span>
+    </button>
     <div class="br">
-      <button class="btn p f" id="btn-save-cal">Guardar ajustes</button>
+      <button class="btn gh f" id="btn-save-cal">Guardar ajustes</button>
       <button class="btn gh" id="btn-load-cal">Recuperar ajustes</button>
     </div>
     <div class="br">
@@ -369,12 +403,10 @@
         <div class="jlim"><span>1 Hz — baja</span><span>50 Hz — alta</span></div>
       </div>
 
-      <!-- Velocidad máxima de servos -->
-      <div class="jb">
-        <div class="jr"><span class="jn">Velocidad de movimiento</span><span class="jv" id="lv-spd">12 °/s</span></div>
-        <input type="range" id="sl-spd" min="10" max="18" value="12" step="1">
-        <div class="jlim"><span>10 °/s — estable</span><span>18 °/s — ágil</span></div>
-      </div>
+      <!-- (Eliminado) Slider de velocidad: los servos MG995 de 180° son
+           dispositivos de POSICIÓN. La velocidad se gestiona internamente
+           por el propio servo, no se controla desde la plataforma. -->
+
 
       <!-- ══════════════════════════════════════ SECCIÓN: MONITOR EN VIVO (colapsable) ══════════════════════════════════════ -->
       <details class="ard-sect" open>
@@ -442,7 +474,7 @@
           </div>
           <div class="ard-servo-ctrl">
             <span class="ard-sc-lbl">Codo (CH2)</span>
-            <input type="range" id="ard-sl-elb" class="ard-sl" min="-30" max="30" value="0" step="1">
+            <input type="range" id="ard-sl-elb" class="ard-sl" min="-22" max="22" value="0" step="1">
             <button class="btn" id="ard-sweep-elb" title="Barrido completo">↔</button>
           </div>
           <div class="ard-servo-ctrl">
@@ -516,7 +548,7 @@
             <div class="wt-ch-h"><span>CH</span><span>SERVO</span><span>FUNCIÓN</span><span>RANGO</span></div>
             <div class="wt-ch"><span class="wt-ch-n">CH 0</span><span class="wt-ch-s">Pinza</span><span class="wt-ch-f">Apertura de garra</span><span class="wt-ch-r">60° totales</span></div>
             <div class="wt-ch"><span class="wt-ch-n">CH 1</span><span class="wt-ch-s">Muñeca</span><span class="wt-ch-f">Rotación axial</span><span class="wt-ch-r">180° totales</span></div>
-            <div class="wt-ch"><span class="wt-ch-n">CH 2</span><span class="wt-ch-s">Codo</span><span class="wt-ch-f">Flexión</span><span class="wt-ch-r">60° totales</span></div>
+            <div class="wt-ch"><span class="wt-ch-n">CH 2</span><span class="wt-ch-s">Codo</span><span class="wt-ch-f">Flexión</span><span class="wt-ch-r">45° totales</span></div>
             <div class="wt-ch"><span class="wt-ch-n">CH 3</span><span class="wt-ch-s">Hombro</span><span class="wt-ch-f">Elevación del brazo</span><span class="wt-ch-r">90° totales</span></div>
             <div class="wt-ch"><span class="wt-ch-n">CH 4</span><span class="wt-ch-s">Base</span><span class="wt-ch-f">Rotación horizontal</span><span class="wt-ch-r">180° totales</span></div>
             <div class="wt-cable">
@@ -626,7 +658,7 @@
                   <option value="4">Canal 4</option>
                 </select>
               </div>
-              <div class="chan-range">60° totales</div>
+              <div class="chan-range">45° totales</div>
             </div>
 
             <!-- Fila: Muñeca -->
@@ -701,7 +733,7 @@
           <div class="ard-steps">
             <div class="ard-step"><span class="ard-sn">1</span><span>Instala la librería <code>Adafruit PWM Servo Driver</code> desde el gestor de librerías del IDE.</span></div>
             <div class="ard-step"><span class="ard-sn">2</span><span>Selecciona la tarjeta <strong>Arduino Uno</strong> o <strong>Mega</strong> y confirma el puerto correcto.</span></div>
-            <div class="ard-step"><span class="ard-sn">3</span><span>Carga el archivo y verifica el mensaje <em>"READY IPN-RoboArm v3.1"</em> en el monitor serial.</span></div>
+            <div class="ard-step"><span class="ard-sn">3</span><span>Carga el archivo y verifica el mensaje <em>"READY IPN-RoboArm v5.0"</em> en el monitor serial.</span></div>
             <div class="ard-step"><span class="ard-sn">4</span><span>Abre esta plataforma en <code>Chrome/Edge ≥ 89</code> y pulsa <strong>⚡ Conectar</strong> para iniciar la operación.</span></div>
           </div>
         </div>
@@ -725,7 +757,7 @@
   <button class="nav-btn active" data-t="manual"><span class="ni">⚙</span><span class="nl">CONTROL</span></button>
   <button class="nav-btn" data-t="vision"><span class="ni">◉</span><span class="nl">VISIÓN</span></button>
   <button class="nav-btn" data-t="calib"><span class="ni">⊞</span><span class="nl">AJUSTES</span></button>
-  <button class="nav-btn" data-t="arduino"><span class="ni">⚡</span><span class="nl">EQUIPO</span></button>
+  <button class="nav-btn" data-t="arduino"><span class="ni"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13.5" r="2"/><path d="M8.5 9.5a5 5 0 0 1 7 0"/><path d="M5 6a9 9 0 0 1 14 0"/><path d="M12 17v3"/></svg></span><span class="nl">EQUIPO</span></button>
 </nav>
 
 <!-- Modal -->

@@ -1,18 +1,26 @@
 /* ═══════════════════════════════════════════════
-   calibration.js — Calibración de límites físicos de servos
+   calibration.js — Calibración de servos MG995 (POSICIÓN)
    ────────────────────────────────────────────────────────────────
-   Permite al usuario definir los ángulos mínimo y máximo de cada
-   articulación para proteger los servos MG995 de sobrepasar sus
-   límites mecánicos. Los valores se guardan en localStorage.
+   Permite al usuario:
+   • Definir el rango operativo (límites mín/máx) por servo dentro
+     del rango físico permitido (Base 180°, Hombro 90°, Codo 45°,
+     Muñeca 180°, Pinza 60°).
+   • Calibrar el "0 lógico" de cada servo (PWM neutro). Esto permite
+     alinear el cero de la página con el cero mecánico real del MG995.
+   • Establecer y restaurar la POSICIÓN BASE (HOME) por servo.
+   • Guardar TODO PARA SIEMPRE (persistencia en localStorage) con un
+     único botón. Los valores se restablecen automáticamente al
+     recargar la página.
 
-   Dependencias: shared.js (JDEFS, J, setJoint, log)
+   Dependencias: shared.js (JDEFS, J, setJoint, log) y arduino.js
+                 (neutrals, saveNeutrals, sendNeutrals, sendCalibLimits)
    ═══════════════════════════════════════════════ */
 
 
-/* Clave de localStorage para persistir la calibración entre sesiones */
-const CAL_KEY = 'roboarm-ipn-v10-calib';
+/* Clave de localStorage para persistir TODA la calibración entre sesiones */
+const CAL_KEY = 'roboarm-ipn-v11-calib';
 
-/* Valores por defecto (iguales a JDEFS — rango completo de los servos) */
+/* Valores por defecto (rango total físico de cada servo) */
 const CAL_DEFAULTS = {
   base: { min: -PHYSICAL_LIMITS.base, max:  PHYSICAL_LIMITS.base },
   sho:  { min: -PHYSICAL_LIMITS.sho,  max:  PHYSICAL_LIMITS.sho  },
@@ -20,53 +28,19 @@ const CAL_DEFAULTS = {
   wri:  { min: -PHYSICAL_LIMITS.wri,  max:  PHYSICAL_LIMITS.wri  },
   grip: { min: -PHYSICAL_LIMITS.grip, max:  PHYSICAL_LIMITS.grip },
 };
-const LEGACY_CAL_DEFAULTS = {
-  base: { min: -90, max:  90 },
-  sho:  { min: -45, max:  45 },
-  elb:  { min: -30, max:  30 },
-  wri:  { min: -90, max:  90 },
-  grip: { min: -30, max:  30 },
-};
+
 const HOME_DEFAULTS = {
-  base: 0,
-  sho:  0,
-  elb:  0,
-  wri:  0,
-  grip: 0,
+  base: 0, sho: 0, elb: 0, wri: 0, grip: 0,
 };
-
-function normalizeCalRange(key, min, max) {
-  const def = CAL_DEFAULTS[key];
-  const legacy = LEGACY_CAL_DEFAULTS[key];
-  if (!def) return { min, max, migrated: false };
-
-  // Migra automáticamente el rango viejo de la UI manual (−10° a +10°),
-  // que dejaba al control manual con solo 20° totales aunque el joint
-  // real admitiera más recorrido.
-  if (min === -10 && max === 10 && (def.min !== -10 || def.max !== 10)) {
-    return { min: def.min, max: def.max, migrated: true };
-  }
-
-  // Si el usuario seguía con los topes de fábrica anteriores, ampliarlos
-  // al nuevo rango físico sin tocar calibraciones personalizadas.
-  if (legacy && min === legacy.min && max === legacy.max &&
-      (def.min !== legacy.min || def.max !== legacy.max)) {
-    return { min: def.min, max: def.max, migrated: true };
-  }
-
-  return { min, max, migrated: false };
-}
 
 
 /* ──────────────────────────────────────────────────────────────
    CONSTRUCCIÓN DE LA UI DE CALIBRACIÓN
-   Genera dinámicamente los controles de min/max para cada
-   articulación. Se llama al inicio y al restablecer.
    ────────────────────────────────────────────────────────────── */
 function buildCalibUI() {
   document.getElementById('calib-wrap').innerHTML = JDEFS.map(d => `
     <div class="cb">
-      <div class="cbn">${d.lbl}</div>
+      <div class="cbn">${d.lbl} <span style="font-size:8px;color:var(--ink3);font-weight:400">(rango físico ±${d.angLim}°)</span></div>
       <div class="cgr">
         <span class="clb">Mín °</span>
         <input type="number" class="inp-n" id="cm-${d.key}" value="${J[d.key].calMin}" min="${-d.angLim}" max="${d.angLim}" step="1">
@@ -77,22 +51,20 @@ function buildCalibUI() {
         <input type="number" class="inp-n" id="cx-${d.key}" value="${J[d.key].calMax}" min="${-d.angLim}" max="${d.angLim}" step="1">
         <span class="cu">°</span>
       </div>
-      <div class="cgr">
-        <span class="clb">Vel</span>
-        <input type="number" class="inp-n" id="dps-${d.key}" value="${J[d.key].dps.toFixed(1)}" min="${MIN_SPEED_DPS}" max="60" step="0.5">
-        <span class="cu">°/s</span>
-      </div>
-      <div class="cgr" style="grid-template-columns:auto 28px 1fr 28px auto">
-        <span class="clb" title="Trim del PWM neutro — si el servo gira solo cuando debería estar parado, ajusta hasta que se detenga por completo">Neutro</span>
-        <button class="btn" onclick="trimNeu('${d.key}', -1)" title="PWM neutro -1">◀</button>
-        <input type="number" class="inp-n" id="neu-${d.key}" value="${neutrals[d.key]}" min="260" max="360" step="1" style="text-align:center">
-        <button class="btn" onclick="trimNeu('${d.key}', +1)" title="PWM neutro +1">▶</button>
-        <span class="cu">pwm</span>
+
+      <!-- ── Calibración del CERO PWM ─────────────────────────── -->
+      <div class="cgr" style="grid-template-columns:auto 28px 1fr 28px auto"
+           title="PWM (en ticks PCA9685) que corresponde al 0° lógico de este servo. Ajusta hasta que la articulación quede mecánicamente alineada con el 0° de la página.">
+        <span class="clb">Cero PWM</span>
+        <button class="btn" onclick="trimZero('${d.key}', -1)" title="−1 tick">◀</button>
+        <input type="number" class="inp-n" id="neu-${d.key}" value="${neutrals[d.key]}" min="${PULSE_HARD_MIN}" max="${PULSE_HARD_MAX}" step="1" style="text-align:center">
+        <button class="btn" onclick="trimZero('${d.key}', +1)" title="+1 tick">▶</button>
+        <span class="cu">tk</span>
       </div>
       <div class="cgr" style="grid-template-columns:1fr 1fr 1fr">
-        <button class="btn" onclick="measureDps('${d.key}')" title="Gira 3 s y mide °/s">📐 °/s</button>
-        <button class="btn gh" onclick="goDegrees('${d.key}', 15)" title="Mover +15° con velocidad calibrada">Test +15°</button>
-        <button class="btn" onclick="autoTrimNeu('${d.key}')" title="Si el servo sigue moviéndose parado, ajusta el neutro hasta detenerlo">🎯 Auto-trim</button>
+        <button class="btn" onclick="captureZero('${d.key}')" title="Toma la posición física actual como 0° lógico">📌 Fijar cero aquí</button>
+        <button class="btn gh" onclick="testZero('${d.key}')" title="Mueve el servo a 0° con la calibración actual">Probar 0°</button>
+        <button class="btn" onclick="resetZero('${d.key}')" title="Restablece el cero al PWM por defecto">↺ Cero</button>
       </div>
     </div>`
   ).join('');
@@ -130,7 +102,6 @@ function refreshHomeInputs() {
 
 function applyHomeCalib() {
   let allValid = true;
-
   JDEFS.forEach(d => {
     const inp = document.getElementById('hm-' + d.key);
     if (!inp) return;
@@ -142,114 +113,69 @@ function applyHomeCalib() {
     }
     inp.value = String(setJointHome(d.key, raw));
   });
-
   refreshHomeInputs();
   return allValid;
 }
 
-/* Trim manual: ajusta el neutro ±1 y lo envía en caliente al Arduino */
-function trimNeu(key, delta) {
+
+/* ──────────────────────────────────────────────────────────────
+   CALIBRACIÓN DEL CERO POR SERVO
+   ────────────────────────────────────────────────────────────── */
+
+/* Trim manual: ±1 tick PWM al cero lógico, aplicado en caliente. */
+function trimZero(key, delta) {
   const inp = document.getElementById('neu-' + key);
   if (!inp) return;
   let v = parseInt(inp.value) + delta;
-  v = Math.max(260, Math.min(360, v));
+  v = clamp(v, PULSE_HARD_MIN, PULSE_HARD_MAX);
   inp.value = v;
   neutrals[key] = v;
   saveNeutrals();
-  sendNeutrals();   // aplica en caliente sin re-flashear
-  log(`${key}: neutro = ${v}`, 'info');
+  if (typeof sendNeutrals === 'function') sendNeutrals();
+  log(`${key}: cero PWM = ${v}`, 'info');
 }
 
-/* Auto-trim interactivo: barre el neutro de 290 → 320 de uno en uno
-   y pide al usuario pulsar ESPACIO cuando el servo deje de moverse. */
-async function autoTrimNeu(key) {
-  if (typeof writer === 'undefined' || !writer) {
-    log('Conecta el equipo primero para realizar este ajuste', 'err'); return;
-  }
-  setJointTarget(key, J[key].angPos);
-  if (!confirm(
-    `Auto-trim de ${key.toUpperCase()}\n\n` +
-    `Voy a barrer el PWM neutro de 290 a 320 lentamente.\n` +
-    `Mira el servo y pulsa OK para empezar.\n` +
-    `Cuando veas que el servo deja de moverse, pulsa ESPACIO (o este botón de nuevo) para fijar el valor.`
-  )) return;
-
-  const lbl = document.getElementById('neu-' + key);
-  let cancelled = false;
-  const onKey = (e) => { if (e.code === 'Space') { e.preventDefault(); cancelled = true; } };
-  document.addEventListener('keydown', onKey);
-
-  log(`Ajuste automático ${key}: buscando el punto estable… pulsa ESPACIO al detenerse`, 'info');
-  for (let v = 290; v <= 320 && !cancelled; v++) {
-    neutrals[key] = v;
-    if (lbl) lbl.value = v;
-    sendNeutrals();
-    log(`${key}: probando ${v}`, 'info');
-    await new Promise(r => setTimeout(r, 450));
-  }
-  document.removeEventListener('keydown', onKey);
+/* Captura la posición ACTUAL como nuevo 0°: el servo debe estar
+   mecánicamente colocado en el ángulo que el usuario considera "0".
+   Ajusta el PWM neutro para que la posición lógica actual se traduzca
+   a ese PWM. */
+function captureZero(key) {
+  if (!J[key]) return;
+  const inp = document.getElementById('neu-' + key);
+  // PWM actual estimado = neutro + angPos*PWM_PER_DEG.
+  // Queremos que esa misma PWM sea ahora "el nuevo neutro".
+  const pwmNow = (neutrals[key] || NEUTRAL_DEFAULT) + Math.round(J[key].angPos * PWM_PER_DEG);
+  const v = clamp(pwmNow, PULSE_HARD_MIN, PULSE_HARD_MAX);
+  neutrals[key] = v;
+  if (inp) inp.value = v;
+  // Tras recalibrar, lo que era angPos pasa a ser 0 lógico.
+  setJointTarget(key, 0);
   saveNeutrals();
-  log(`${key}: neutro fijado en ${neutrals[key]}`, 'ok');
+  if (typeof sendNeutrals === 'function') sendNeutrals();
+  log(`${key}: cero fijado en PWM ${v} (posición actual = 0°)`, 'ok');
 }
 
-/* Auto-trim total: para TODOS los servos a la vez y deja al usuario ajustar
-   uno por uno con los botones ◀ ▶. Barre bajando el PWM en cada uno. */
-async function autoTrimAll() {
-  if (typeof writer === 'undefined' || !writer) {
-    log('Conecta el equipo primero', 'err'); return;
-  }
-  for (const d of JDEFS) setJointTarget(d.key, J[d.key].angPos);
-  log('Todos los ejes quedaron en reposo — ajusta cada control hasta eliminar movimiento residual', 'info');
-  sendNeutrals();
+/* Mueve el servo a 0° usando la calibración actual. */
+function testZero(key) {
+  if (!J[key]) return;
+  setJointTarget(key, 0);
+  log(`${key}: enviando a 0° con la calibración actual`, 'info');
 }
 
-/* ──────────────────────────────────────────────────────────────
-   AUTO-MEDIR °/s — gira el servo 3 s a máxima velocidad
-   y pide al usuario que escriba los grados realmente recorridos.
-   ────────────────────────────────────────────────────────────── */
-async function measureDps(key) {
-  if (typeof writer === 'undefined' || !writer) {
-    log('Conecta el Arduino primero para auto-medir', 'err'); return;
-  }
-  const TEST_SECS = 3.0;
-  log(`Midiendo ${key}: gira ${TEST_SECS}s…`, 'info');
-  // Pausar el ciclo de commit mientras medimos, para que no envíe pulsos propios
-  // que interrumpan el test de 3 segundos continuos.
-  if (typeof serialT !== 'undefined' && serialT) { clearInterval(serialT); serialT = null; }
-  const ch = ({ base:'B', sho:'H', elb:'C', wri:'W', grip:'G' })[key];
-  await sendRaw(`${ch}:${TEST_SECS.toFixed(3)}`);
-  await new Promise(r => setTimeout(r, TEST_SECS * 1000 + 200));
-  await sendRaw(`${ch}:0.000`);
-  // Reactivar el intervalo de envío periódico
-  if (typeof serialT !== 'undefined' && !serialT && typeof sendPos === 'function') {
-    serialT = setInterval(sendPos, Math.round(1000 / (serialHz || 20)));
-  }
-  const ans = prompt(`¿Cuántos GRADOS se movió ${key.toUpperCase()} en ${TEST_SECS}s?`, '');
-  const deg = parseFloat(ans);
-  if (!isNaN(deg) && deg > 0) {
-    const measuredDps = deg / TEST_SECS;
-    J[key].dpsBase = measuredDps / (speedDps / DEFAULT_SPEED_DPS);
-    applySpeedProfile(speedDps);
-    document.getElementById('dps-' + key).value = J[key].dps.toFixed(1);
-    saveDps();
-    log(`${key} calibrado: ${measuredDps.toFixed(1)} °/s`, 'ok');
-  } else {
-    log('Medición cancelada', 'info');
-  }
-}
-
-/* Mover por grados usando la velocidad calibrada */
-function goDegrees(key, deg) {
-  moveDegrees(key, deg);
-  log(`${key}: moviendo ${deg}° (~${(Math.abs(deg)/J[key].dps).toFixed(2)}s)`, 'ok');
+/* Restablece el cero PWM al valor por defecto del centro. */
+function resetZero(key) {
+  if (!J[key]) return;
+  neutrals[key] = NEUTRAL_DEFAULT;
+  const inp = document.getElementById('neu-' + key);
+  if (inp) inp.value = NEUTRAL_DEFAULT;
+  saveNeutrals();
+  if (typeof sendNeutrals === 'function') sendNeutrals();
+  log(`${key}: cero PWM restablecido (${NEUTRAL_DEFAULT})`, 'info');
 }
 
 
 /* ──────────────────────────────────────────────────────────────
-   APLICAR CALIBRACIÓN
-   Lee los valores de los inputs y los aplica a J, a los sliders
-   manuales y a las etiquetas de límites del sidebar.
-   Retorna true si todos los valores son válidos.
+   APLICAR / VALIDAR CALIBRACIÓN
    ────────────────────────────────────────────────────────────── */
 function applyCalib() {
   let allValid = true;
@@ -257,48 +183,39 @@ function applyCalib() {
   JDEFS.forEach(d => {
     const mn = parseFloat(document.getElementById('cm-' + d.key).value);
     const mx = parseFloat(document.getElementById('cx-' + d.key).value);
-    const dp = parseFloat(document.getElementById('dps-' + d.key)?.value ?? J[d.key].dps);
     const nu = parseInt(document.getElementById('neu-' + d.key)?.value ?? neutrals[d.key]);
-    if (!isNaN(nu) && nu >= 260 && nu <= 360) neutrals[d.key] = nu;
+    if (!isNaN(nu) && nu >= PULSE_HARD_MIN && nu <= PULSE_HARD_MAX) neutrals[d.key] = nu;
 
-    // Validación: números válidos y mínimo < máximo
     if (
       isNaN(mn) || isNaN(mx) || mn >= mx ||
       mn < -d.angLim || mx > d.angLim
     ) {
-      log(`Rango inválido en ${d.lbl}: mín debe ser < máx`, 'err');
+      log(`Rango inválido en ${d.lbl}: mín debe ser < máx y dentro de ±${d.angLim}°`, 'err');
       allValid = false;
       return;
     }
 
-    // Actualizar límites en el estado global
     J[d.key].calMin = mn;
     J[d.key].calMax = mx;
-    if (!isNaN(dp) && dp > 0) {
-      J[d.key].dpsBase = dp / (speedDps / DEFAULT_SPEED_DPS);
-    }
 
-    // Actualizar el slider manual para que refleje los nuevos límites
+    // Actualizar sliders manuales
     ['sl-', 'ard-sl-'].forEach(prefix => {
       const sl = document.getElementById(prefix + d.key);
       if (sl) { sl.min = mn; sl.max = mx; }
     });
 
-    // Actualizar las etiquetas de límites visibles debajo del slider
+    // Etiquetas visibles
     const lmin = document.getElementById('lm-' + d.key + '-min');
     const lmax = document.getElementById('lm-' + d.key + '-max');
     if (lmin) lmin.textContent = mn + '°';
     if (lmax) lmax.textContent = mx + '°';
 
-    // Re-clampear el valor actual al nuevo rango (si estaba fuera de límites)
+    // Re-clampear referencia HOME y target al nuevo rango
     setJointHome(d.key, getJointHome(d.key));
     _setJointTargetRaw(d.key, clampJointDeg(d.key, J[d.key].target));
-    J[d.key].angPos = clampJointDeg(d.key, J[d.key].angPos);
-    J[d.key].committed = clampJointDeg(d.key, J[d.key].committed);
   });
 
   if (allValid) {
-    applySpeedProfile(speedDps);
     if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
     refreshHomeInputs();
   }
@@ -307,104 +224,103 @@ function applyCalib() {
 
 
 /* ──────────────────────────────────────────────────────────────
-   BOTÓN: GUARDAR CALIBRACIÓN
-   Aplica y persiste en localStorage.
+   GUARDAR PARA SIEMPRE (persistencia integral)
+   Guarda límites + cero PWM + HOME por servo en localStorage,
+   y los empuja al equipo conectado para que queden activos al
+   instante. Al recargar la página, todo se restablece.
    ────────────────────────────────────────────────────────────── */
-document.getElementById('btn-save-cal').addEventListener('click', () => {
-  if (!applyCalib() || !applyHomeCalib()) return;  // No guardar si hay errores
-  if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al guardar
+function saveCalibForever({ silent = false } = {}) {
+  if (!applyCalib() || !applyHomeCalib()) return false;
+  if (typeof syncLastCmd === 'function') syncLastCmd();
   const data = {};
   JDEFS.forEach(x => {
     data[x.key] = {
-      min: J[x.key].calMin,
-      max: J[x.key].calMax,
-      dps: J[x.key].dpsBase,
+      min:  J[x.key].calMin,
+      max:  J[x.key].calMax,
       home: getJointHome(x.key),
+      zero: neutrals[x.key],
     };
   });
   try {
     localStorage.setItem(CAL_KEY, JSON.stringify(data));
-    saveDps();
     saveNeutrals();
     if (typeof sendNeutrals === 'function') sendNeutrals();
-    log('Ajustes y posición base guardados correctamente', 'ok');
+    if (typeof sendCalibLimits === 'function') sendCalibLimits();
+    if (!silent) log('Ajustes guardados PARA SIEMPRE — se restablecerán al recargar la página', 'ok');
+    return true;
   } catch (e) {
     log('No fue posible guardar los ajustes', 'err');
+    return false;
   }
-});
+}
 
 
 /* ──────────────────────────────────────────────────────────────
-   BOTÓN: CARGAR CALIBRACIÓN
-   Lee de localStorage y actualiza los inputs.
+   BOTONES — guardar / cargar / restablecer
    ────────────────────────────────────────────────────────────── */
+document.getElementById('btn-save-cal').addEventListener('click', () => {
+  saveCalibForever();
+});
+
+const btnSaveForever = document.getElementById('btn-save-forever');
+if (btnSaveForever) {
+  btnSaveForever.addEventListener('click', () => {
+    if (!saveCalibForever()) return;
+    log('✓ Configuración persistida — disponible siempre que abras la página', 'ok');
+  });
+}
+
 document.getElementById('btn-load-cal').addEventListener('click', () => {
   try {
     const saved = localStorage.getItem(CAL_KEY);
     if (!saved) { log('No hay ajustes guardados', 'err'); return; }
     const data = JSON.parse(saved);
-    let migrated = false;
     JDEFS.forEach(x => {
-      if (data[x.key]) {
-        const parsedMin = parseFloat(data[x.key].min);
-        const parsedMax = parseFloat(data[x.key].max);
-        const fixed = normalizeCalRange(x.key, parsedMin, parsedMax);
-        document.getElementById('cm-' + x.key).value = fixed.min;
-        document.getElementById('cx-' + x.key).value = fixed.max;
-        if (fixed.migrated) {
-          data[x.key].min = fixed.min;
-          data[x.key].max = fixed.max;
-          migrated = true;
-        }
-        if (data[x.key].dps) {
-          const el = document.getElementById('dps-' + x.key);
-          if (el) el.value = (data[x.key].dps * (speedDps / DEFAULT_SPEED_DPS)).toFixed(1);
-        }
-        if (typeof data[x.key].home === 'number') {
-          const homeEl = document.getElementById('hm-' + x.key);
-          if (homeEl) homeEl.value = data[x.key].home;
-        } else {
-          data[x.key].home = HOME_DEFAULTS[x.key];
-        }
+      const e = data[x.key]; if (!e) return;
+      const cm = document.getElementById('cm-' + x.key);
+      const cx = document.getElementById('cx-' + x.key);
+      const nu = document.getElementById('neu-' + x.key);
+      const hm = document.getElementById('hm-' + x.key);
+      if (cm && typeof e.min === 'number') cm.value = e.min;
+      if (cx && typeof e.max === 'number') cx.value = e.max;
+      if (nu && typeof e.zero === 'number') nu.value = e.zero;
+      if (hm && typeof e.home === 'number') hm.value = e.home;
+      if (typeof e.zero === 'number' && e.zero >= PULSE_HARD_MIN && e.zero <= PULSE_HARD_MAX) {
+        neutrals[x.key] = e.zero;
       }
     });
     if (!applyCalib() || !applyHomeCalib()) return;
-    if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al cargar
-    if (migrated) {
-      try { localStorage.setItem(CAL_KEY, JSON.stringify(data)); } catch (e) {}
-      log('Ajustes recuperados y rangos anteriores actualizados automáticamente', 'ok');
-    } else {
-      log('Ajustes y posición base recuperados correctamente', 'ok');
-    }
+    if (typeof syncLastCmd === 'function') syncLastCmd();
+    saveNeutrals();
+    if (typeof sendNeutrals === 'function') sendNeutrals();
+    if (typeof sendCalibLimits === 'function') sendCalibLimits();
+    log('Ajustes y posición base recuperados correctamente', 'ok');
   } catch (e) {
     log('No fue posible recuperar los ajustes', 'err');
   }
 });
 
-
-/* ──────────────────────────────────────────────────────────────
-   BOTÓN: RESTAURAR VALORES POR DEFECTO
-   ────────────────────────────────────────────────────────────── */
 document.getElementById('btn-reset-cal').addEventListener('click', () => {
   JDEFS.forEach(d => {
     document.getElementById('cm-' + d.key).value = CAL_DEFAULTS[d.key].min;
     document.getElementById('cx-' + d.key).value = CAL_DEFAULTS[d.key].max;
-    const dpsEl = document.getElementById('dps-' + d.key);
-    if (dpsEl) dpsEl.value = J[d.key].dps.toFixed(1);
+    const neuEl = document.getElementById('neu-' + d.key);
+    if (neuEl) neuEl.value = NEUTRAL_DEFAULT;
+    neutrals[d.key] = NEUTRAL_DEFAULT;
     const homeEl = document.getElementById('hm-' + d.key);
     if (homeEl) homeEl.value = HOME_DEFAULTS[d.key];
   });
   applyCalib();
   applyHomeCalib();
-  if (typeof syncLastCmd === 'function') syncLastCmd();  // No mover servos al restaurar
+  if (typeof syncLastCmd === 'function') syncLastCmd();
+  saveNeutrals();
+  if (typeof sendNeutrals === 'function') sendNeutrals();
   log('Los ajustes y la posición base se restablecieron a sus valores iniciales', 'info');
 });
 
 
 /* ──────────────────────────────────────────────────────────────
-   BOTONES: IR A MÍNIMOS / MÁXIMOS
-   Mueve todas las articulaciones a sus límites de calibración.
-   Útil para verificar el rango real del hardware.
+   IR A MÍNIMOS / MÁXIMOS
    ────────────────────────────────────────────────────────────── */
 document.getElementById('btn-go-min').addEventListener('click', () => {
   JDEFS.forEach(d => setJointTarget(d.key, J[d.key].calMin));
@@ -421,7 +337,7 @@ document.getElementById('btn-capture-home').addEventListener('click', () => {
     const inp = document.getElementById('hm-' + d.key);
     if (inp) inp.value = String(pose[d.key]);
   });
-  log('La posición actual se guardó como referencia temporal — pulsa Guardar ajustes para conservarla', 'ok');
+  log('La posición actual se guardó como referencia temporal — pulsa Guardar para conservarla', 'ok');
 });
 
 document.getElementById('btn-go-home-ref').addEventListener('click', () => {
@@ -430,7 +346,6 @@ document.getElementById('btn-go-home-ref').addEventListener('click', () => {
   log('Moviendo a la posición base', 'info');
 });
 
-// Restituye solo la referencia HOME sin alterar los límites min/max.
 document.getElementById('btn-reset-home').addEventListener('click', () => {
   JDEFS.forEach(d => {
     const inp = document.getElementById('hm-' + d.key);
@@ -443,7 +358,6 @@ document.getElementById('btn-reset-home').addEventListener('click', () => {
 
 /* ──────────────────────────────────────────────────────────────
    INICIALIZACIÓN
-   Construir la UI y cargar calibración previa si existe.
    ────────────────────────────────────────────────────────────── */
 buildCalibUI();
 buildHomeUI();
@@ -458,8 +372,6 @@ document.getElementById('home-wrap').addEventListener('click', e => {
     log(`${key}: posición base actualizada con la posición actual`, 'ok');
     return;
   }
-
-  // Botón contextual por articulación para ir a su HOME individual.
   const goBtn = e.target.closest('button[data-home-go]');
   if (goBtn) {
     const key = goBtn.dataset.homeGo;
@@ -469,54 +381,41 @@ document.getElementById('home-wrap').addEventListener('click', e => {
   }
 });
 
-// Listener: cualquier cambio en el input del neutro → aplica en caliente
+// Listener: cualquier cambio en el input del cero PWM → aplica en caliente
 document.getElementById('calib-wrap').addEventListener('change', e => {
   if (!e.target.id || !e.target.id.startsWith('neu-')) return;
   const key = e.target.id.slice(4);
-  const v = Math.max(260, Math.min(360, parseInt(e.target.value) || 307));
+  const v = clamp(parseInt(e.target.value) || NEUTRAL_DEFAULT, PULSE_HARD_MIN, PULSE_HARD_MAX);
   e.target.value = v;
   neutrals[key] = v;
   saveNeutrals();
   if (typeof sendNeutrals === 'function') sendNeutrals();
-  log(`${key}: neutro → ${v}`, 'info');
+  log(`${key}: cero PWM → ${v}`, 'info');
 });
 
-// Intentar cargar calibración guardada automáticamente al iniciar
+// Carga automática de calibración guardada al iniciar
 try {
   const saved = localStorage.getItem(CAL_KEY);
   if (saved) {
     const data = JSON.parse(saved);
-    let migrated = false;
-    const normalized = {};
     JDEFS.forEach(x => {
-      if (data[x.key]) {
-        const parsedMin = parseFloat(data[x.key].min);
-        const parsedMax = parseFloat(data[x.key].max);
-        if (!isFinite(parsedMin) || !isFinite(parsedMax)) return;
-        const fixed = normalizeCalRange(x.key, parsedMin, parsedMax);
-        J[x.key].calMin = fixed.min;
-        J[x.key].calMax = fixed.max;
-        const home = typeof data[x.key].home === 'number' ? data[x.key].home : HOME_DEFAULTS[x.key];
-        setJointHome(x.key, home);
-        normalized[x.key] = { ...data[x.key], min: fixed.min, max: fixed.max, home };
-        migrated ||= fixed.migrated;
-        if (typeof data[x.key].dps === 'number' && data[x.key].dps > 0) {
-          J[x.key].dpsBase = data[x.key].dps;
-        }
+      const e = data[x.key]; if (!e) return;
+      if (typeof e.min === 'number' && typeof e.max === 'number' && e.min < e.max) {
+        J[x.key].calMin = clamp(e.min, -x.angLim, x.angLim);
+        J[x.key].calMax = clamp(e.max, -x.angLim, x.angLim);
       }
+      if (typeof e.zero === 'number' && e.zero >= PULSE_HARD_MIN && e.zero <= PULSE_HARD_MAX) {
+        neutrals[x.key] = e.zero;
+      }
+      const home = typeof e.home === 'number' ? e.home : HOME_DEFAULTS[x.key];
+      setJointHome(x.key, home);
     });
-    applySpeedProfile(speedDps);
-    buildCalibUI();  // Reconstruir con los valores cargados
+    buildCalibUI();
     buildHomeUI();
     refreshHomeInputs();
     if (typeof refreshManualRangeUi === 'function') refreshManualRangeUi();
-    if (migrated) {
-      try { localStorage.setItem(CAL_KEY, JSON.stringify(normalized)); } catch (e) {}
-      log('Se restauraron los ajustes previos y se actualizaron los rangos anteriores automáticamente', 'info');
-    } else {
-      log('Se restauraron automáticamente los ajustes previos y la posición base', 'info');
-    }
+    log('Se restauraron los ajustes guardados de la sesión anterior', 'info');
   }
 } catch (e) {
-  /* Si hay un error en el JSON guardado, simplemente usar los valores por defecto */
+  /* defaults */
 }

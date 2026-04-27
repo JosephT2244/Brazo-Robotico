@@ -191,17 +191,21 @@ function addHole(parent, x, y, z, r, h) {
 }
 
 // Marco abierto usado en el brazo superior y antebrazo para replicar el chasis.
+// Versión simplificada: sólo cruces en los extremos para conseguir el aspecto
+// de "ventana" abierta del CAD de referencia (sin travesaños intermedios).
 function openFrame(parent, x, y, z, w, h, l, t, topMat, bottomMat) {
   const g = group(parent, x, y, z);
   const tm = topMat || MAT.red;
   const bm = bottomMat || MAT.rdx;
 
+  // 4 largueros longitudinales (las cuatro aristas del marco)
   place(g, box(t, t, l, tm), -w/2,  h/2, l/2);
   place(g, box(t, t, l, tm),  w/2,  h/2, l/2);
   place(g, box(t, t, l, bm), -w/2, -h/2, l/2);
   place(g, box(t, t, l, bm),  w/2, -h/2, l/2);
 
-  [0, l*0.34, l*0.70, l].forEach(zz => {
+  // Sólo dos marcos transversales: extremo trasero y extremo delantero.
+  [0, l].forEach(zz => {
     place(g, box(w + t, t, t, tm), 0,  h/2, zz);
     place(g, box(w + t, t, t, bm), 0, -h/2, zz);
     place(g, box(t, h + t, t, tm), -w/2, 0, zz);
@@ -299,7 +303,23 @@ function jaw(parent, side) {
 
 const lowerPlate = roundedPlate(scene, 3.04, 0.082, 3.04, 0.18, MAT.red, 0, 0.041, 0);
 const upperPlate = roundedPlate(scene, 2.86, 0.078, 2.86, 0.16, MAT.red, 0, 0.220, 0);
-place(upperPlate, box(2.62, 0.016, 2.62, MAT.rdx), 0, 0.046, 0);
+// La placa superior del CAD tiene un cuadro central abierto donde se aloja
+// el servo de la base. Modelamos ese marco con cuatro tiras finas en lugar
+// de la chapa interior maciza.
+const upperOpening = 0.640;            // lado del hueco central
+const upperRim     = (2.62 - upperOpening) / 2;
+[
+  [ 0,  (upperOpening + upperRim) / 2],
+  [ 0, -(upperOpening + upperRim) / 2],
+].forEach(([x, z]) => {
+  place(upperPlate, box(2.62, 0.016, upperRim, MAT.rdx), x, 0.046, z);
+});
+[
+  [ (upperOpening + upperRim) / 2, 0],
+  [-(upperOpening + upperRim) / 2, 0],
+].forEach(([x, z]) => {
+  place(upperPlate, box(upperRim, 0.016, upperOpening, MAT.rdx), x, 0.046, z);
+});
 
 [
   [-1, -1], [1, -1], [1, 1], [-1, 1]
@@ -317,10 +337,14 @@ place(upperPlate, box(2.62, 0.016, 2.62, MAT.rdx), 0, 0.046, 0);
   });
 });
 
+// Postes cilíndricos rojos entre las dos placas de la base (igual que el CAD).
 [
-  [-0.86, -0.86], [0.86, -0.86], [0.86, 0.86], [-0.86, 0.86]
+  [-1.08, -1.08], [1.08, -1.08], [1.08, 1.08], [-1.08, 1.08]
 ].forEach(([x, z]) => {
-  place(scene, cyl(0.060, 0.060, 0.168, 16, MAT.slvd), x, 0.136, z);
+  place(scene, cyl(0.085, 0.085, 0.180, 18, MAT.red), x, 0.131, z);
+  // Tornillos cromados visibles en el extremo de cada poste
+  place(scene, cyl(0.022, 0.022, 0.030, 12, MAT.chr), x, 0.232, z);
+  place(scene, cyl(0.022, 0.022, 0.030, 12, MAT.chr), x, 0.030, z);
 });
 
 place(scene, cyl(0.088, 0.088, 0.268, 18, MAT.chr), 0, 0.135, 0);
@@ -357,10 +381,15 @@ place(baseG, box(0.110, 0.082, 0.588, MAT.red),  0.240, 0.470, 0);
 servo(baseG, 0, 0.366, 0.000);
 
 const shoMount = group(baseG, 0, 0.958, 0.024);
-place(shoMount, box(0.820, 0.090, 0.540, MAT.brn), 0, -0.255, 0);
-place(shoMount, box(0.086, 0.540, 0.430, MAT.brn), -0.298, 0, 0);
-place(shoMount, box(0.086, 0.540, 0.430, MAT.brn),  0.298, 0, 0);
-place(shoMount, box(0.660, 0.082, 0.100, MAT.brn), 0,  0.225, -0.165);
+// U-bracket completo en rojo (en el CAD el bracket es rojo plástico/metálico).
+place(shoMount, box(0.820, 0.090, 0.540, MAT.red), 0, -0.255, 0);
+place(shoMount, box(0.086, 0.540, 0.430, MAT.red), -0.298, 0, 0);
+place(shoMount, box(0.086, 0.540, 0.430, MAT.red),  0.298, 0, 0);
+place(shoMount, box(0.660, 0.082, 0.100, MAT.red), 0,  0.225, -0.165);
+// Refuerzos de aluminio plateado que sujetan el servo del hombro
+// (visibles en las renders del CAD como brackets metálicos pequeños).
+place(shoMount, box(0.110, 0.230, 0.072, MAT.slvd), -0.260, 0.020, 0.180);
+place(shoMount, box(0.110, 0.230, 0.072, MAT.slvd),  0.260, 0.020, 0.180);
 servo(shoMount, 0.000, 0.000, 0.000, 0, 0, -Math.PI/2);
 [-0.298, 0.298].forEach(dx => {
   [-0.128, 0.128].forEach(dz => {
@@ -377,14 +406,23 @@ const shoAxle = cyl(0.046, 0.046, 0.760, 18, MAT.chr);
 shoAxle.rotation.z = Math.PI / 2;
 shoG.add(shoAxle);
 
+// Tapas laterales del hombro: rojas en el lado externo, aluminio en el interno
+// (en el CAD se ven dos discos: uno rojo grande hacia afuera y un disco
+//  plateado más pequeño que es el rodamiento embutido en la chapa).
 [
   [-0.338, 0.176, MAT.red],
-  [0.338, 0.136, MAT.rdx]
+  [ 0.338, 0.176, MAT.red]
 ].forEach(([x, r, mat]) => {
   const hub = cyl(r, r, 0.072, 24, mat);
   hub.rotation.z = Math.PI / 2;
   hub.position.set(x, 0, 0);
   shoG.add(hub);
+});
+[-0.302, 0.302].forEach(x => {
+  const inner = cyl(0.092, 0.092, 0.040, 18, MAT.slvd);
+  inner.rotation.z = Math.PI / 2;
+  inner.position.set(x, 0, 0);
+  shoG.add(inner);
 });
 
 const shoBear = trs(0.136, 0.018, MAT.brn, 10, 36);
@@ -444,27 +482,30 @@ const arm2 = openFrame(elbG, 0, 0.090, 0.150, FRAME_W, FRAME_H, FRAME_L, FRAME_T
 servo(arm2, 0.040, FRAME_H/2 + 0.342, 0.140);
 servo(arm2, 0.138, 0.000, FRAME_L - 0.220, 0, 0, -Math.PI/2);
 
+// Soporte diagonal trasero (presente en el CAD de referencia, conecta el
+// codo con la parte inferior del marco). Se omite el "midBrace" intermedio
+// porque ensucia la silueta del bastidor abierto.
 [-1, 1].forEach(side => {
   const backBrace = box(0.052, 0.250, 0.052, MAT.red);
   backBrace.position.set(side * 0.185, -FRAME_H/2 - 0.040, 0.402);
   backBrace.rotation.x = -0.62;
   arm2.add(backBrace);
-
-  const midBrace = box(0.052, 0.210, 0.052, MAT.red);
-  midBrace.position.set(side * 0.185, -FRAME_H/2 - 0.030, 1.020);
-  midBrace.rotation.x = 0.54;
-  arm2.add(midBrace);
 });
 
 /* ─── Articulación muñeca ───────────────────────────────── */
 const wriP = group(arm2, 0, 0.010, FRAME_L);
 const wriG = group(wriP);
 
+// Cuerpo principal de la muñeca — rojo macizo como en el CAD
 place(wriG, box(0.520, 0.110, 0.165, MAT.red), 0.000, 0.020, 0.030);
 place(wriG, box(0.365, 0.052, 0.180, MAT.rdx), 0.000, 0.108, 0.030);
-place(wriG, box(0.320, 0.060, 0.190, MAT.sbk), 0.000, -0.080, 0.030);
-place(wriG, box(0.360, 0.280, 0.250, MAT.red), 0.335, 0.055, 0.060);
-place(wriG, box(0.340, 0.062, 0.260, MAT.sbk), 0.335, -0.115, 0.060);
+// Tapa inferior de aluminio plateado (en el CAD se ve un bracket metálico
+// claro debajo del bloque rojo, donde está atornillado el servo).
+place(wriG, box(0.320, 0.060, 0.190, MAT.slvd), 0.000, -0.080, 0.030);
+// Carcasa lateral roja que aloja el servo de la pinza
+place(wriG, box(0.360, 0.280, 0.250, MAT.red),  0.335, 0.055, 0.060);
+// Soporte aluminio bajo el bloque lateral
+place(wriG, box(0.340, 0.062, 0.260, MAT.slvd), 0.335, -0.115, 0.060);
 
 const wristCollar = cyl(0.082, 0.082, 0.420, 18, MAT.chr);
 wristCollar.rotation.x = Math.PI / 2;
@@ -490,9 +531,15 @@ const smallGear = gear(wriG, 0.148, 0.090, 0, 0.108, 0.046, 16, 0.030, 0.020, MA
    ══════════════════════════════════ ══════════ */
 const gripR = group(wriG, 0.004, -0.020, 0.180);
 
-place(gripR, box(0.300, 0.060, 0.092, MAT.slvd), 0, 0.082, 0.012);
-place(gripR, box(0.188, 0.104, 0.142, MAT.slvd), 0, 0.018, 0.032);
-place(gripR, box(0.390, 0.018, 0.024, MAT.chr), 0, 0.084, 0.010);
+// Cuerpo trasero rojo de la pinza (en el CAD es el bloque donde se monta
+//  el servo de la garra). Sólo las garras móviles y los engranajes quedan
+//  en aluminio.
+place(gripR, box(0.300, 0.060, 0.092, MAT.red),  0, 0.082, 0.012);
+place(gripR, box(0.188, 0.104, 0.142, MAT.red),  0, 0.018, 0.032);
+// Placa cromada superior — eje central donde gira el engranaje grande.
+place(gripR, box(0.390, 0.018, 0.024, MAT.chr),  0, 0.084, 0.010);
+// Refuerzo plateado del soporte de las garras (tapa aluminizada del CAD)
+place(gripR, box(0.214, 0.026, 0.058, MAT.slvd), 0, 0.030, 0.110);
 
 const jaw1 = jaw(gripR, -1);
 const jaw2 = jaw(gripR,  1);

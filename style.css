@@ -7,7 +7,7 @@ html{font-size:16px}
 body{height:100vh;background:var(--bg);color:var(--ink);font-family:var(--f-body);overflow:hidden}
 #app{display:grid;grid-template-rows:var(--header-h) 1fr var(--footer-h);grid-template-columns:1fr var(--sidebar-w);height:100vh;overflow:hidden}
 header,footer{grid-column:1/-1}
-header{display:flex;align-items:center;gap:14px;padding:0 20px;background:var(--g-deep);border-bottom:2px solid var(--g);z-index:30}
+header{display:flex;align-items:center;gap:14px;padding:0 20px;background:var(--g-deep);border-bottom:2px solid var(--g);z-index:9999;position:relative;isolation:isolate}
 .crest{width:34px;height:38px;flex-shrink:0;background:linear-gradient(145deg,#8C1428 0%,#440A13 100%);clip-path:polygon(50% 0%,100% 22%,100% 78%,50% 100%,0% 78%,0% 22%);display:flex;align-items:center;justify-content:center;font-family:var(--f-mono);font-size:7.5px;font-weight:500;color:#EDE7DD;letter-spacing:.8px}
 .hdr-brand{flex:1;min-width:0}
 .hdr-title{font-family:var(--f-disp);font-weight:600;font-size:14.5px;color:#F2EAE2;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -912,48 +912,83 @@ body{
 }
 
 header{
-  padding:0 20px;
-  background:linear-gradient(180deg,#4A0B16 0%,#390811 100%);
-  box-shadow:none;
-  border-bottom:1px solid rgba(255,255,255,.08);
+  padding:0 22px;
+  height:60px;
+  background:
+    linear-gradient(180deg,#4E0B17 0%,#3A0810 60%,#2D060C 100%);
+  border-bottom:1px solid rgba(255,255,255,.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.04),
+    inset 0 -1px 0 rgba(0,0,0,.35),
+    0 1px 0 rgba(110,15,30,.18);
+  position:relative;
+}
+header::after{
+  content:'';
+  position:absolute;
+  left:0;right:0;bottom:-1px;
+  height:1px;
+  background:linear-gradient(90deg,
+    transparent 0%, rgba(200,32,44,.45) 30%,
+    rgba(200,32,44,.55) 50%, rgba(200,32,44,.45) 70%,
+    transparent 100%);
 }
 
 .crest{
-  width:40px;
-  height:40px;
-  border-radius:10px;
+  width:42px;
+  height:42px;
+  border-radius:11px;
   clip-path:none;
-  background:linear-gradient(180deg,#F3ECE3 0%,#DED3C4 100%);
+  background:linear-gradient(180deg,#F8F2E8 0%,#E4D9C8 100%);
   color:var(--g-deep);
-  box-shadow:none;
-  font-size:9px;
-  font-weight:600;
-  letter-spacing:1.2px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.7),
+    0 1px 2px rgba(0,0,0,.25),
+    0 0 0 1px rgba(255,255,255,.06);
+  transition:transform .35s cubic-bezier(.4,0,.2,1);
 }
+.crest:hover{ transform:rotate(-3deg) scale(1.05); }
+.crest img{ display:block; }
 
 .hdr-brand{
   display:flex;
   flex-direction:column;
   justify-content:center;
+  gap:1px;
 }
 
 .hdr-kicker{
   font-family:var(--f-mono);
-  font-size:7px;
-  letter-spacing:2px;
-  color:#D6BEC2;
+  font-size:7.5px;
+  letter-spacing:2.4px;
+  color:#E0C4C9;
   text-transform:uppercase;
-  margin-bottom:2px;
+  font-weight:500;
+  opacity:.85;
 }
 
 .hdr-title{
-  font-size:15px;
-  color:#F3ECE5;
+  font-family:var(--f-disp);
+  font-size:15.5px;
+  font-weight:600;
+  color:#F7EFE6;
+  letter-spacing:.2px;
+  line-height:1.1;
+  text-shadow:0 1px 0 rgba(0,0,0,.25);
 }
 
 .hdr-sub{
-  color:#BFA7AB;
-  letter-spacing:1.8px;
+  display:block;
+  font-family:var(--f-mono);
+  font-size:7.5px;
+  color:#B89AA0;
+  letter-spacing:1.6px;
+  text-transform:uppercase;
+  font-weight:300;
+  margin-top:1px;
 }
 
 .hdr-keys,
@@ -1318,4 +1353,537 @@ footer{
     width:100%;
     justify-content:flex-start;
   }
+}
+
+
+/* ════════════════════════════════════════════════
+   ESPACIADO ENTRE TARJETAS DE ARTICULACIÓN
+   ────────────────────────────────────────────────────────────────
+   Las tarjetas .jb dentro de .section-shell se apilaban pegadas
+   entre sí. Convertimos el contenedor en una columna flex con gap
+   uniforme para que respiren visualmente y nada "choque".
+   ════════════════════════════════════════════════ */
+.section-shell{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.section-shell > .sec{
+  margin-bottom:2px;
+}
+.section-shell > .br{
+  margin-top:2px;
+}
+/* Pequeña separación interna también para tarjetas anidadas
+   (p. ej. los "deg-ctrls" generados dinámicamente). */
+#deg-ctrls > .jb{
+  margin-bottom:0;
+}
+#deg-ctrls{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+/* Calibración: mismo trato a las tarjetas .cb y .cb-stack. */
+#calib-wrap,
+#home-wrap{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+
+/* ════════════════════════════════════════════════
+   BOTÓN "CONSERVAR AJUSTES" (persistencia)
+   ────────────────────────────────────────────────────────────────
+   Sobrio pero refinado: fondo crema con un acento dorado y un
+   marco fino en el color de marca. Sin gradientes agresivos.
+   ════════════════════════════════════════════════ */
+.btn-keep{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  width:100%;
+  padding:9px 14px;
+  font-family:var(--f-disp,var(--f-body));
+  font-size:11.5px;
+  font-style:italic;
+  font-weight:500;
+  letter-spacing:.4px;
+  color:var(--g);
+  background:linear-gradient(180deg,#FBF6EC 0%,#F2E9D6 100%);
+  border:1px solid rgba(110,15,30,.22);
+  border-radius:6px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 1px 2px rgba(110,15,30,.06);
+  cursor:pointer;
+  transition:transform .14s ease, border-color .18s ease,
+             box-shadow .18s ease, color .18s ease;
+}
+.btn-keep::before{
+  content:'';
+  width:5px; height:5px;
+  border-radius:50%;
+  background:#C8A030;
+  box-shadow:0 0 0 2px rgba(200,160,48,.18);
+  flex:0 0 auto;
+}
+.btn-keep:hover{
+  border-color:var(--g);
+  color:var(--g-deep);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.7),
+    0 2px 8px rgba(110,15,30,.10);
+}
+.btn-keep:active{
+  transform:translateY(1px);
+  box-shadow:
+    inset 0 1px 2px rgba(110,15,30,.14),
+    0 1px 1px rgba(0,0,0,.04);
+}
+.btn-keep .lbl{
+  flex:1 1 auto;
+  text-align:center;
+}
+.btn-keep .hint{
+  font-family:var(--f-mono);
+  font-style:normal;
+  font-size:8px;
+  letter-spacing:.6px;
+  color:var(--ink4);
+  text-transform:uppercase;
+}
+
+
+/* ════════════════════════════════════════════════
+   ESPACIADO ENTRE TARJETAS DE ARTICULACIÓN
+   ────────────────────────────────────────────────────────────────
+   Las tarjetas .jb dentro de .section-shell se apilaban pegadas
+   entre sí. Convertimos el contenedor en una columna flex con gap
+   uniforme para que respiren visualmente y nada "choque".
+   ════════════════════════════════════════════════ */
+.section-shell{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.section-shell > .sec{
+  margin-bottom:2px;
+}
+.section-shell > .br{
+  margin-top:2px;
+}
+/* Pequeña separación interna también para tarjetas anidadas
+   (p. ej. los "deg-ctrls" generados dinámicamente). */
+#deg-ctrls{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+#deg-ctrls > .jb{
+  margin-bottom:0;
+}
+/* Calibración: mismo trato a las tarjetas .cb y a las de HOME. */
+#calib-wrap,
+#home-wrap{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+
+/* ════════════════════════════════════════════════
+   BOTÓN "CONSERVAR AJUSTES" (persistencia discreta)
+   ────────────────────────────────────────────────────────────────
+   Sobrio pero refinado: fondo crema con un acento dorado y un
+   marco fino en el color de marca. Sin gradientes agresivos.
+   ════════════════════════════════════════════════ */
+.btn-keep{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  width:100%;
+  padding:9px 14px;
+  font-family:var(--f-disp,var(--f-body));
+  font-size:11.5px;
+  font-style:italic;
+  font-weight:500;
+  letter-spacing:.4px;
+  color:var(--g);
+  background:linear-gradient(180deg,#FBF6EC 0%,#F2E9D6 100%);
+  border:1px solid rgba(110,15,30,.22);
+  border-radius:6px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 1px 2px rgba(110,15,30,.06);
+  cursor:pointer;
+  transition:transform .14s ease, border-color .18s ease,
+             box-shadow .18s ease, color .18s ease;
+}
+.btn-keep::before{
+  content:'';
+  width:5px; height:5px;
+  border-radius:50%;
+  background:#C8A030;
+  box-shadow:0 0 0 2px rgba(200,160,48,.18);
+  flex:0 0 auto;
+}
+.btn-keep:hover{
+  border-color:var(--g);
+  color:var(--g-deep);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.7),
+    0 2px 8px rgba(110,15,30,.10);
+}
+.btn-keep:active{
+  transform:translateY(1px);
+  box-shadow:
+    inset 0 1px 2px rgba(110,15,30,.14),
+    0 1px 1px rgba(0,0,0,.04);
+}
+.btn-keep .lbl{
+  flex:1 1 auto;
+  text-align:center;
+}
+.btn-keep .hint{
+  font-family:var(--f-mono);
+  font-style:normal;
+  font-size:8px;
+  letter-spacing:.6px;
+  color:var(--ink4);
+  text-transform:uppercase;
+}
+
+
+/* ════════════════════════════════════════════════
+   BOTONES GLOBALES — PARO de emergencia + HOME
+   ────────────────────────────────────────────────────────────────
+   Anclados al viewport en la esquina inferior derecha. Visibles
+   desde cualquier pestaña, encima de overlays y del 3D. PARO usa
+   color rojo dramático y un anillo pulsante cuando está armado.
+   ════════════════════════════════════════════════ */
+#global-actions{
+  position:absolute;
+  right:14px;
+  bottom:14px;
+  z-index:50;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  align-items:flex-end;
+  pointer-events:none;
+}
+#global-actions .ga-btn{
+  pointer-events:auto;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-width:120px;
+  padding:11px 16px;
+  font-family:var(--f-mono);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:1.4px;
+  text-transform:uppercase;
+  border-radius:6px;
+  cursor:pointer;
+  user-select:none;
+  -webkit-user-select:none;
+  transition:transform .12s ease, box-shadow .18s ease,
+             background .18s ease, border-color .18s ease;
+  backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+}
+#global-actions .ga-btn .ga-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:14px; height:14px;
+  flex:0 0 auto;
+  font-size:14px;
+  line-height:1;
+}
+#global-actions .ga-btn:active{
+  transform:translateY(1px);
+}
+
+/* PARO de emergencia: rojo institucional, gran contraste. */
+#global-actions .ga-stop{
+  background:linear-gradient(180deg,#B82828 0%,#8E1818 100%);
+  color:#FFF6F4;
+  border:1px solid #5D0E0E;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.18),
+    0 4px 14px rgba(160,30,30,.32),
+    0 1px 3px rgba(0,0,0,.20);
+}
+#global-actions .ga-stop:hover{
+  background:linear-gradient(180deg,#C83434 0%,#A02020 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    0 6px 18px rgba(180,40,40,.40),
+    0 1px 3px rgba(0,0,0,.22);
+}
+#global-actions .ga-stop .ga-icon::before{
+  content:'';
+  display:block;
+  width:10px; height:10px;
+  background:#FFF6F4;
+  border-radius:1px;
+}
+
+/* Cuando el PARO está armado el botón parpadea sutilmente y cambia
+   de etiqueta visual a "Reanudar". */
+.estop-active #global-actions .ga-stop,
+#global-actions .ga-stop.estop-armed{
+  background:linear-gradient(180deg,#702020 0%,#511414 100%);
+  border-color:#3B0E0E;
+  animation:estopPulse 1.2s ease-in-out infinite;
+}
+.estop-active #global-actions .ga-stop .ga-lbl::before,
+#global-actions .ga-stop.estop-armed .ga-lbl::before{
+  content:'REANUDAR · ';
+  font-size:9px;
+  letter-spacing:.6px;
+  opacity:.8;
+}
+.estop-active #global-actions .ga-stop .ga-lbl,
+#global-actions .ga-stop.estop-armed .ga-lbl{
+  font-size:10px;
+}
+@keyframes estopPulse{
+  0%,100%{ box-shadow: inset 0 1px 0 rgba(255,255,255,.16),
+                       0 0 0 0 rgba(220,60,60,.55),
+                       0 4px 14px rgba(120,20,20,.32); }
+  50%   { box-shadow: inset 0 1px 0 rgba(255,255,255,.16),
+                       0 0 0 10px rgba(220,60,60,0),
+                       0 6px 18px rgba(120,20,20,.40); }
+}
+
+/* HOME: tono crema sobrio con borde de marca. */
+#global-actions .ga-home{
+  background:rgba(252,248,242,.96);
+  color:var(--g-deep);
+  border:1px solid var(--g-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 3px 10px rgba(0,0,0,.10),
+    0 1px 2px rgba(110,15,30,.08);
+}
+#global-actions .ga-home:hover{
+  background:#FFF;
+  border-color:var(--g);
+  color:var(--g);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.7),
+    0 4px 14px rgba(110,15,30,.12),
+    0 1px 2px rgba(0,0,0,.08);
+}
+#global-actions .ga-home .ga-icon{
+  font-size:16px;
+  margin-top:-1px;
+}
+
+/* Halo rojo discreto en el viewport mientras el PARO está activo */
+.estop-active #vp::after{
+  content:'';
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  z-index:40;
+  box-shadow:inset 0 0 0 3px rgba(184,40,40,.55),
+             inset 0 0 60px rgba(184,40,40,.18);
+  animation:estopHalo 1.4s ease-in-out infinite;
+}
+@keyframes estopHalo{
+  0%,100%{ opacity:.85; }
+  50%   { opacity:.55; }
+}
+
+/* Móvil: dejar espacio sobre la nav inferior */
+@media(max-width:900px){
+  #global-actions{
+    right:10px;
+    bottom:calc(var(--nav-h, 56px) + 12px);
+  }
+  #global-actions .ga-btn{
+    min-width:104px;
+    padding:10px 14px;
+    font-size:10.5px;
+  }
+}
+
+/* Landscape muy bajo: compactar */
+@media(max-height:520px) and (orientation:landscape){
+  #global-actions{
+    bottom:8px;
+    right:8px;
+    gap:6px;
+  }
+  #global-actions .ga-btn{
+    min-width:96px;
+    padding:8px 12px;
+    font-size:10px;
+  }
+}
+
+
+/* ════════════════════════════════════════════════
+   AJUSTES DE LAYOUT — botones globales más sobrios,
+   con separación cómoda respecto a la consola.
+   ════════════════════════════════════════════════ */
+#logbox{
+  bottom:90px;
+  right:14px;
+  width:240px;
+  max-height:96px;
+}
+
+/* Botones globales — diseño plano y discreto. */
+#global-actions{
+  right:14px;
+  bottom:14px;
+  gap:8px;
+}
+#global-actions .ga-btn{
+  min-width:104px;
+  padding:8px 14px;
+  font-size:10px;
+  letter-spacing:1.2px;
+  border-radius:6px;
+  gap:7px;
+  font-weight:600;
+  backdrop-filter:blur(8px) saturate(1.05);
+  -webkit-backdrop-filter:blur(8px) saturate(1.05);
+}
+#global-actions .ga-btn .ga-icon{
+  width:11px; height:11px;
+  font-size:12px;
+}
+#global-actions .ga-stop .ga-icon::before{
+  width:8px; height:8px;
+}
+
+/* PARO — color sobrio, sin gradiente */
+#global-actions .ga-stop{
+  background:rgba(168,24,32,.94);
+  color:#FBF4F2;
+  border:1px solid rgba(80,10,14,.65);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,.12),
+    0 0 0 1px rgba(255,255,255,.04) inset;
+}
+#global-actions .ga-stop:hover{
+  background:rgba(184,32,42,.98);
+  box-shadow:
+    0 2px 6px rgba(120,18,24,.20),
+    0 0 0 1px rgba(255,255,255,.06) inset;
+}
+
+/* HOME — neutro crema */
+#global-actions .ga-home{
+  background:rgba(252,248,242,.92);
+  color:var(--g-deep);
+  border:1px solid rgba(110,15,30,.18);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,.06);
+}
+#global-actions .ga-home:hover{
+  background:#FFF;
+  border-color:rgba(110,15,30,.32);
+  box-shadow:
+    0 2px 6px rgba(0,0,0,.08);
+}
+
+.estop-active #global-actions .ga-stop .ga-lbl,
+#global-actions .ga-stop.estop-armed .ga-lbl{
+  font-size:9px;
+}
+
+/* Móvil: alinear ambos por el mismo borde y dejar la consola arriba */
+@media(max-width:900px){
+  #logbox{
+    bottom:calc(var(--nav-h, 56px) + 110px);
+    right:10px;
+    width:min(60vw, 220px);
+    max-height:80px;
+  }
+  #global-actions{
+    right:10px;
+    bottom:calc(var(--nav-h, 56px) + 8px);
+    gap:7px;
+  }
+  #global-actions .ga-btn{
+    min-width:92px;
+    padding:7px 11px;
+    font-size:9.5px;
+  }
+}
+
+/* ════════════════════════════════════════════════
+   PANE-HERO TÉCNICO — sustituye los textos amables
+   ("Ejes de control · En vivo · Precisión") por una
+   tira de métricas que un operador técnico sí utiliza.
+   ════════════════════════════════════════════════ */
+.pane-hero-tech{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:10px;
+}
+.pane-hero-tech .ph-stat{
+  flex:1 1 calc(33% - 6px);
+  min-width:88px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  padding:8px 10px;
+  background:rgba(255,255,255,.55);
+  border:1px solid rgba(110,15,30,.10);
+  border-left:2px solid var(--g-line);
+  border-radius:4px;
+}
+.pane-hero-tech .ph-k{
+  font-family:var(--f-mono);
+  font-size:7.5px;
+  letter-spacing:.9px;
+  text-transform:uppercase;
+  color:var(--ink4);
+}
+.pane-hero-tech .ph-v{
+  font-family:var(--f-mono);
+  font-size:12.5px;
+  font-weight:500;
+  color:var(--g-deep);
+  letter-spacing:.4px;
+}
+.pane-hero-tech .ph-sub{
+  font-family:var(--f-mono);
+  font-size:7.5px;
+  color:var(--ink4);
+  letter-spacing:.5px;
+}
+
+/* Iconos vectoriales de las pestañas — sustituyen al emoji ⚡ */
+.tab-icon-svg,
+.nav-btn .ni svg,
+.tab .tab-icon svg{
+  width:14px;
+  height:14px;
+  display:block;
+  stroke:currentColor;
+  fill:none;
+  stroke-width:1.6;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.nav-btn .ni svg{
+  width:18px;
+  height:18px;
 }
