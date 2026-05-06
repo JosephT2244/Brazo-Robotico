@@ -3,8 +3,8 @@
    ────────────────────────────────────────────────────────────────
    Permite al usuario:
    • Definir el rango operativo (límites mín/máx) por servo dentro
-     del rango físico permitido (Base 180°, Hombro 90°, Codo 45°,
-     Muñeca 180°, Pinza 60°).
+     del rango físico permitido (Base 180°, Hombro 90°, Codo 90°,
+     Muñeca 180°, Pinza 50°).
    • Calibrar el "0 lógico" de cada servo (PWM neutro). Esto permite
      alinear el cero de la página con el cero mecánico real del MG995.
    • Establecer y restaurar la POSICIÓN BASE (HOME) por servo.
@@ -18,15 +18,15 @@
 
 
 /* Clave de localStorage para persistir TODA la calibración entre sesiones */
-const CAL_KEY = 'roboarm-ipn-v11-calib';
+const CAL_KEY = 'roboarm-ipn-v15-calib';
 
 /* Valores por defecto (rango total físico de cada servo) */
 const CAL_DEFAULTS = {
-  base: { min: -PHYSICAL_LIMITS.base, max:  PHYSICAL_LIMITS.base },
-  sho:  { min: -PHYSICAL_LIMITS.sho,  max:  PHYSICAL_LIMITS.sho  },
-  elb:  { min: -PHYSICAL_LIMITS.elb,  max:  PHYSICAL_LIMITS.elb  },
-  wri:  { min: -PHYSICAL_LIMITS.wri,  max:  PHYSICAL_LIMITS.wri  },
-  grip: { min: -PHYSICAL_LIMITS.grip, max:  PHYSICAL_LIMITS.grip },
+  base: { min: PHYSICAL_MIN.base, max: PHYSICAL_MAX.base },
+  sho:  { min: PHYSICAL_MIN.sho,  max: PHYSICAL_MAX.sho  },
+  elb:  { min: PHYSICAL_MIN.elb,  max: PHYSICAL_MAX.elb  },
+  wri:  { min: PHYSICAL_MIN.wri,  max: PHYSICAL_MAX.wri  },
+  grip: { min: PHYSICAL_MIN.grip, max: PHYSICAL_MAX.grip },
 };
 
 const HOME_DEFAULTS = {
@@ -40,15 +40,15 @@ const HOME_DEFAULTS = {
 function buildCalibUI() {
   document.getElementById('calib-wrap').innerHTML = JDEFS.map(d => `
     <div class="cb">
-      <div class="cbn">${d.lbl} <span style="font-size:8px;color:var(--ink3);font-weight:400">(rango físico ±${d.angLim}°)</span></div>
+      <div class="cbn">${d.lbl} <span style="font-size:8px;color:var(--ink3);font-weight:400">(rango físico ${d.min}° a ${d.max}°)</span></div>
       <div class="cgr">
         <span class="clb">Mín °</span>
-        <input type="number" class="inp-n" id="cm-${d.key}" value="${J[d.key].calMin}" min="${-d.angLim}" max="${d.angLim}" step="1">
+        <input type="number" class="inp-n" id="cm-${d.key}" value="${J[d.key].calMin}" min="${d.min}" max="${d.max}" step="${ANGLE_STEP_DEG}">
         <span class="cu">°</span>
       </div>
       <div class="cgr">
         <span class="clb">Máx °</span>
-        <input type="number" class="inp-n" id="cx-${d.key}" value="${J[d.key].calMax}" min="${-d.angLim}" max="${d.angLim}" step="1">
+        <input type="number" class="inp-n" id="cx-${d.key}" value="${J[d.key].calMax}" min="${d.min}" max="${d.max}" step="${ANGLE_STEP_DEG}">
         <span class="cu">°</span>
       </div>
 
@@ -78,7 +78,7 @@ function buildHomeUI() {
       <div class="cbn">${d.lbl}</div>
       <div class="cgr">
         <span class="clb">HOME °</span>
-        <input type="number" class="inp-n" id="hm-${d.key}" value="${getJointHome(d.key)}" min="${-d.angLim}" max="${d.angLim}" step="1">
+        <input type="number" class="inp-n" id="hm-${d.key}" value="${getJointHome(d.key)}" min="${d.min}" max="${d.max}" step="${ANGLE_STEP_DEG}">
         <span class="cu">°</span>
       </div>
       <div class="cgr" style="grid-template-columns:1fr 1fr">
@@ -93,9 +93,9 @@ function refreshHomeInputs() {
   JDEFS.forEach(d => {
     const inp = document.getElementById('hm-' + d.key);
     if (!inp) return;
-    inp.min = String(-d.angLim);
-    inp.max = String(d.angLim);
-    inp.step = '1';
+    inp.min = String(d.min);
+    inp.max = String(d.max);
+    inp.step = String(ANGLE_STEP_DEG);
     inp.value = String(getJointHome(d.key));
   });
 }
@@ -106,8 +106,8 @@ function applyHomeCalib() {
     const inp = document.getElementById('hm-' + d.key);
     if (!inp) return;
     const raw = parseFloat(inp.value);
-    if (isNaN(raw) || raw < -d.angLim || raw > d.angLim) {
-      log(`Posición base no válida en ${d.lbl}: debe estar entre ${-d.angLim}° y ${d.angLim}°`, 'err');
+    if (isNaN(raw) || raw < d.min || raw > d.max) {
+      log(`Posición base no válida en ${d.lbl}: debe estar entre ${d.min}° y ${d.max}°`, 'err');
       allValid = false;
       return;
     }
@@ -188,9 +188,9 @@ function applyCalib() {
 
     if (
       isNaN(mn) || isNaN(mx) || mn >= mx ||
-      mn < -d.angLim || mx > d.angLim
+      mn < d.min || mx > d.max
     ) {
-      log(`Rango inválido en ${d.lbl}: mín debe ser < máx y dentro de ±${d.angLim}°`, 'err');
+      log(`Rango inválido en ${d.lbl}: mín debe ser < máx y dentro de ${d.min}° a ${d.max}°`, 'err');
       allValid = false;
       return;
     }
@@ -401,8 +401,8 @@ try {
     JDEFS.forEach(x => {
       const e = data[x.key]; if (!e) return;
       if (typeof e.min === 'number' && typeof e.max === 'number' && e.min < e.max) {
-        J[x.key].calMin = clamp(e.min, -x.angLim, x.angLim);
-        J[x.key].calMax = clamp(e.max, -x.angLim, x.angLim);
+        J[x.key].calMin = clamp(e.min, x.min, x.max);
+        J[x.key].calMax = clamp(e.max, x.min, x.max);
       }
       if (typeof e.zero === 'number' && e.zero >= PULSE_HARD_MIN && e.zero <= PULSE_HARD_MAX) {
         neutrals[x.key] = e.zero;

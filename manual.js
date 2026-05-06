@@ -2,7 +2,7 @@
    manual.js — Control manual · Servos de POSICIÓN (MG995 180°)
    ────────────────────────────────────────────────────────────────
    Cada slider envía directamente la posición angular al servo.
-   Teclado: cada pulsación mueve MANUAL_STEP_DEG (10°).
+   Teclado: cada pulsación mueve MANUAL_STEP_DEG (1°).
    ════════════════════════════════════════════════ */
 
 /* ── Sliders en grados objetivo (±angLim) ─────────────────────── */
@@ -50,7 +50,7 @@ function refreshManualRangeUi() {
     if (totalLbl) totalLbl.textContent = `Rango total ${total}°`;
     if (sideLbl) {
       sideLbl.textContent =
-        `Rango disponible: ${min}° a ${max}°. Cada paso del control manual mueve ${MANUAL_STEP_DEG}° para mantener precisión.`;
+        `Rango disponible: ${min}° a ${max}°. Cada toque mueve exactamente ${MANUAL_STEP_DEG}°.`;
     }
     if (inp) {
       const safeMax = Math.max(MANUAL_STEP_DEG, total);
@@ -65,6 +65,12 @@ function refreshManualRangeUi() {
 }
 
 refreshManualRangeUi();
+
+function handOffVisionForManual() {
+  if (!window.__camOn) return;
+  if (typeof window.stopCam === 'function') window.stopCam();
+  else window.__camOn = false;
+}
 
 
 /* ── UI "Mover en grados" ─────────────────────────────────────── */
@@ -83,16 +89,11 @@ refreshManualRangeUi();
         <span class="jv" id="ang-${d.key}">0°</span>
       </div>
       <div id="deg-range-side-${d.key}" style="font-size:8px;color:var(--ink3);margin-bottom:6px">
-        Rango disponible: ${min}° a ${max}°. Cada paso del control manual mueve ${MANUAL_STEP_DEG}° para mantener precisión.
+        Rango disponible: ${min}° a ${max}°. Cada toque mueve exactamente ${MANUAL_STEP_DEG}°.
       </div>
       <div class="br" style="gap:4px;flex-wrap:wrap">
-        <button class="btn" data-dkey="${d.key}" data-deg="-${MANUAL_STEP_DEG * 2}">◀◀ ${MANUAL_STEP_DEG * 2}°</button>
         <button class="btn" data-dkey="${d.key}" data-deg="-${MANUAL_STEP_DEG}">◀ ${MANUAL_STEP_DEG}°</button>
-        <button class="btn" data-dkey="${d.key}" data-deg-input="deg-inp-${d.key}" data-deg-sign="-1">◀</button>
-        <input type="number" class="inp-n" id="deg-inp-${d.key}" value="${MANUAL_STEP_DEG}" step="${MANUAL_STEP_DEG}" min="${MANUAL_STEP_DEG}" max="${Math.max(MANUAL_STEP_DEG, total)}" title="Máximo actual: ${Math.max(MANUAL_STEP_DEG, total)}°" style="width:64px;flex:0 0 auto">
-        <button class="btn p" data-dkey="${d.key}" data-deg-input="deg-inp-${d.key}" data-deg-sign="1">▶</button>
         <button class="btn" data-dkey="${d.key}" data-deg="+${MANUAL_STEP_DEG}">${MANUAL_STEP_DEG}° ▶</button>
-        <button class="btn" data-dkey="${d.key}" data-deg="+${MANUAL_STEP_DEG * 2}">${MANUAL_STEP_DEG * 2}° ▶▶</button>
       </div>
     </div>`;
   }).join('');
@@ -103,28 +104,12 @@ refreshManualRangeUi();
     const b = e.target.closest('button[data-dkey]');
     if (!b) return;
     const k = b.dataset.dkey;
-    let deg;
-    if (b.dataset.deg !== undefined) {
-      deg = parseFloat(b.dataset.deg);
-    } else {
-      const inp = document.getElementById(b.dataset.degInput);
-      if (!inp) return;
-      const sign = parseFloat(b.dataset.degSign || '1') || 1;
-      const min = parseFloat(inp.min);
-      const max = parseFloat(inp.max);
-      const raw = parseFloat(inp.value);
-      const safe = clamp(
-        isFinite(raw) ? raw : MANUAL_STEP_DEG,
-        isFinite(min) ? min : MANUAL_STEP_DEG,
-        isFinite(max) ? max : MANUAL_STEP_DEG
-      );
-      inp.value = String(safe);
-      deg = safe * Math.sign(sign || 1);
-    }
+    const deg = parseFloat(b.dataset.deg);
     if (!isFinite(deg) || !deg) return;
-    deg = snapDeltaDeg(deg, ANGLE_STEP_DEG);
-    moveDegrees(k, deg);
-    log(`${k}: ${deg > 0 ? '+' : ''}${deg}° → ${J[k].target.toFixed(1)}°`, 'ok');
+    handOffVisionForManual();
+    const delta = snapDeltaDeg(deg, MANUAL_STEP_DEG);
+    if (!moveDegrees(k, delta)) return;
+    log(`${k}: ${delta > 0 ? '+' : ''}${delta}° → ${J[k].target.toFixed(1)}°`, 'ok');
   });
 
   // Refresca el ángulo mostrado periódicamente (sin interacción)
@@ -168,10 +153,54 @@ const KM = {
 };
 
 const pressedKeys = new Set();
+const holdStartMs = new Map();
+const continuousKeys = new Set();
+let keyHoldRaf = null;
+let keyHoldLastTs = 0;
+const KEY_HOLD_DELAY_MS = 220;
+const KEY_HOLD_LEAD_DEG = 2;
 
 function refreshKeyHighlight() {
   const last = Array.from(pressedKeys.keys()).pop();
   hlJ(last ? KM[last][0] : null);
+}
+
+function stopJointAtCurrent(key) {
+  if (!J[key]) return;
+  setJointTarget(key, J[key].angPos);
+}
+
+function keyHoldLoop(ts) {
+  keyHoldRaf = null;
+  if (!pressedKeys.size) {
+    keyHoldLastTs = 0;
+    return;
+  }
+
+  const now = performance.now();
+  const jointDir = {};
+  pressedKeys.forEach(code => {
+    const item = KM[code];
+    if (!item) return;
+    const started = holdStartMs.get(code) || now;
+    if (now - started < KEY_HOLD_DELAY_MS) return;
+    continuousKeys.add(code);
+    const [joint, sign] = item;
+    jointDir[joint] = (jointDir[joint] || 0) + sign;
+  });
+
+  Object.keys(jointDir).forEach(joint => {
+    const dir = Math.sign(jointDir[joint]);
+    if (!dir) return;
+    setJointTarget(joint, J[joint].angPos + dir * KEY_HOLD_LEAD_DEG);
+  });
+
+  keyHoldLastTs = ts;
+  keyHoldRaf = requestAnimationFrame(keyHoldLoop);
+}
+
+function ensureKeyHoldLoop() {
+  if (!keyHoldRaf) keyHoldRaf = requestAnimationFrame(keyHoldLoop);
 }
 
 document.addEventListener('keydown', e => {
@@ -202,14 +231,25 @@ document.addEventListener('keydown', e => {
     }
     e.preventDefault();
     const [joint, sign] = KM[e.code];
+    const wasPressed = pressedKeys.has(e.code);
+    handOffVisionForManual();
     pressedKeys.add(e.code);
-    moveDegrees(joint, sign * MANUAL_STEP_DEG);
+    if (!wasPressed) {
+      holdStartMs.set(e.code, performance.now());
+      moveDegrees(joint, sign * MANUAL_STEP_DEG);
+    }
+    ensureKeyHoldLoop();
     hlJ(joint);
   }
 });
 
 document.addEventListener('keyup', e => {
   if (!KM[e.code]) return;
+  const [joint] = KM[e.code];
+  const wasContinuous = continuousKeys.has(e.code);
   pressedKeys.delete(e.code);
+  holdStartMs.delete(e.code);
+  continuousKeys.delete(e.code);
+  if (wasContinuous) stopJointAtCurrent(joint);
   refreshKeyHighlight();
 });

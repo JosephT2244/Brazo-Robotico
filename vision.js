@@ -38,14 +38,14 @@ let selectedDevId  = null;
 let _selBound      = false;
 let _rafId         = null;    // rAF del draw loop
 let _frameCount    = 0;       // Throttle MediaPipe
-const MP_SKIP      = 2;       // Procesar 1 de cada 3 frames
+const MP_SKIP      = 1;       // Procesar 1 de cada 2 frames
 
 /* ─── Parámetros ajustables ─────────────────────────────────── */
 let SENS_X = 120;
 let SENS_Y = 130;
 let SENS_Z = 100;
-let ALPHA1 = 0.40;   // EMA-1: anti-ruido. Más bajo = seguimiento más directo del gesto.
-let ALPHA2 = 0.55;   // EMA-2: suavidad. Balance entre respuesta y estabilidad del servo.
+let ALPHA1 = 0.32;   // EMA-1: anti-ruido. Más bajo = seguimiento más directo del gesto.
+let ALPHA2 = 0.45;   // EMA-2: suavidad. Balance entre respuesta y estabilidad del servo.
 
 /* ─── Zona muerta y mapeo a GRADOS objetivo ────────────────────
    Cada eje mide distancia desde el centro (0.5 para X/Y).
@@ -55,15 +55,15 @@ let ALPHA2 = 0.55;   // EMA-2: suavidad. Balance entre respuesta y estabilidad d
    VISION_LIMITS: topes duros específicos de modo visión (grados ±).
    Por defecto siguen el rango físico disponible; si luego quieres
    hacer visión más conservadora, bájalos aquí. Rangos totales:
-     base 240° → ±120, hombro 90° → ±45, codo 120° → ±60,
-     muñeca 180° → ±90, pinza 60° → ±30. */
+     base 180° → ±90, hombro 90° → 0..90, codo 90° → -90..0,
+     muñeca 180° → ±90, pinza 50° → ±25. */
 const DEADZONE = 0.18;
 const VISION_LIMITS = {
-  base: PHYSICAL_LIMITS.base,  // ±120 → 240° totales
-  sho:  Math.min(PHYSICAL_LIMITS.sho, VISION_ACTIVE_LIMITS.sho ?? PHYSICAL_LIMITS.sho), // ±45  → 90° totales
-  elb:  PHYSICAL_LIMITS.elb,   // ±60  → 120° totales
+  base: PHYSICAL_LIMITS.base,  // ±90   → 180° totales
+  sho:  Math.min(PHYSICAL_LIMITS.sho, VISION_ACTIVE_LIMITS.sho ?? PHYSICAL_LIMITS.sho), // 0..90 → 90° totales
+  elb:  PHYSICAL_LIMITS.elb,   // -90..0 → 90° totales
   wri:  PHYSICAL_LIMITS.wri,   // ±90  → 180° totales
-  grip: PHYSICAL_LIMITS.grip,  // ±30  → 60°  totales
+  grip: PHYSICAL_LIMITS.grip,  // ±25 → 50°  totales
 };
 
 /* ─── CUADRÍCULA DE CONTROL 2D ────────────────────────────────────
@@ -81,7 +81,7 @@ const VISION_STICKY_EPS = {
   sho: 3.5,   // ignora microcambios del hombro para reducir temblor
 };
 const VISION_FILTER_ALPHA = {
-  sho: { a1: 0.52, a2: 0.74 },
+  sho: { a1: 0.34, a2: 0.48 },
 };
 /** Límite efectivo: MENOR entre el tope mecánico (angLim) y el de visión */
 function visionCap(key) {
@@ -187,11 +187,18 @@ function disableVisionBaseControls() {
 }
 
 /* ─── Filtro de señal doble EMA (en GRADOS objetivo) ────────── */
+function _adaptiveVisionAlpha(baseAlpha, errorDeg) {
+  const assist = clamp((errorDeg - 3) / 18, 0, 1);
+  const fastAlpha = Math.max(0.16, baseAlpha - 0.36);
+  return lerp(baseAlpha, fastAlpha, assist);
+}
+
 function applyFilter(key, raw) {
   const lim = visionCap(key);
   const fa = VISION_FILTER_ALPHA[key];
-  const alpha1 = fa?.a1 ?? ALPHA1;
-  const alpha2 = fa?.a2 ?? ALPHA2;
+  const errorDeg = Math.abs(raw - F[key].e2);
+  const alpha1 = _adaptiveVisionAlpha(fa?.a1 ?? ALPHA1, errorDeg);
+  const alpha2 = _adaptiveVisionAlpha(fa?.a2 ?? ALPHA2, errorDeg);
   raw = clamp(raw, -lim, lim);
   F[key].e1 = lerp(raw, F[key].e1, alpha1);
   F[key].e2 = lerp(F[key].e1, F[key].e2, alpha2);
@@ -359,7 +366,7 @@ function processFrame() {
 
     /* CODO: flexión del codo. Ángulo en el vértice E entre -SE y EW.
        Extendido = 180°. Flexionado 90° = 90°. Totalmente cerrado = 0°.
-       Neutro = 135° (ligeramente flexionado). Mapeamos a ±60°.
+       Neutro = 135° (ligeramente flexionado). Mapeamos al rango de codo configurado.
        Flexión (doblado) → positivo; extensión → negativo. */
     const ES = { x:-SE.x, y:-SE.y, z:-SE.z };
     const elbFlex = _angBetween(ES, EW);      // 0..180
@@ -945,6 +952,7 @@ function stopCam() {
   document.getElementById('ft-mode').textContent = 'Vista: Control';
   log('Cámara detenida', 'info');
 }
+window.stopCam = stopCam;
 
 /* ─── Listeners de controles ─────────────────────────────────── */
 // Botones principales del panel de visión.

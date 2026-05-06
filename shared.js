@@ -3,16 +3,16 @@
    ────────────────────────────────────────────────────────────────
    Modelo POSICIÓN: los servos son MG995 Hi-SPEED de 180° (servos de
    ángulo, no de velocidad). Cada articulación tiene un ángulo objetivo
-   en GRADOS dentro de ±angLim. La página envía la posición directa al
+   en GRADOS dentro de su rango permitido. La página envía la posición directa al
    firmware; el firmware aplica la conversión ángulo→PWM usando un
    neutro calibrado por servo.
 
    Rangos de operación (ángulos TOTALES solicitados):
    • Base   180°  → ±90°
-   • Hombro  90°  → ±45°
-   • Codo    45°  → ±22.5°
+   • Hombro  90°  → 0° a 90°
+   • Codo    90°  → -90° a 0°
    • Muñeca 180°  → ±90°
-   • Pinza   60°  → ±30°
+   • Pinza   50°  → ±25°
 
    Dependencias: ninguna (es la base de todo)
    ════════════════════════════════════════════════ */
@@ -21,39 +21,111 @@
 /* ──────────────────────────────────────────────────────────────
    DEFINICIÓN DE ARTICULACIONES
    ────────────────────────────────────────────────────────────── */
-const ANGLE_STEP_DEG  = 1;
-const MANUAL_STEP_DEG = 10;
+const ANGLE_STEP_DEG  = 0.25;
+const MANUAL_STEP_DEG = 1;
+
+// Límite de velocidad de los comandos enviados al firmware. No cambia la
+// velocidad interna del MG995; reparte los cambios de posición en pasos cortos.
+const SERVO_SPEED_KEY = 'roboarm-servo-command-speed-v6';
+const SERVO_SPEED_PREVIOUS_KEYS = [
+  { key: 'roboarm-servo-command-speed-v5', scale: 2 },
+  { key: 'roboarm-servo-command-speed-v4', scale: 4 },
+  { key: 'roboarm-servo-command-speed-v3', scale: 0.05 },
+  { key: 'roboarm-servo-command-speed-v2', scale: 0.05 },
+  { key: 'roboarm-servo-command-speed-v1', scale: 0.025 },
+];
+const SERVO_SPEED_STEP_DPS = 0.1;
+const SERVO_SPEED_MIN_DPS = 0.1;
+const SERVO_SPEED_MAX_DPS = 20;
+const SERVO_SPEED_DEFAULT_DPS = 4;
+const VISION_SERVO_SPEED_MULTIPLIER = 6;
+const SERVO_JOINT_SPEED_SCALE = {
+  base: 0.60,
+  sho:  0.35,
+  elb:  0.35,
+  wri:  0.60,
+  grip: 0.35,
+};
+
+function clampServoSpeed(v) {
+  const clamped = Math.max(SERVO_SPEED_MIN_DPS, Math.min(SERVO_SPEED_MAX_DPS, v));
+  return Math.round(clamped / SERVO_SPEED_STEP_DPS) * SERVO_SPEED_STEP_DPS;
+}
+
+let servoCommandDps = SERVO_SPEED_DEFAULT_DPS;
+try {
+  const savedServoSpeed = parseFloat(localStorage.getItem(SERVO_SPEED_KEY));
+  if (isFinite(savedServoSpeed)) {
+    servoCommandDps = clampServoSpeed(savedServoSpeed);
+  } else {
+    for (const prev of SERVO_SPEED_PREVIOUS_KEYS) {
+      const previousServoSpeed = parseFloat(localStorage.getItem(prev.key));
+      if (isFinite(previousServoSpeed)) {
+        servoCommandDps = clampServoSpeed(previousServoSpeed * prev.scale);
+        break;
+      }
+    }
+  }
+} catch(e) { /* default */ }
+
+function setServoCommandSpeed(degPerSec) {
+  const v = clampServoSpeed(isFinite(degPerSec) ? degPerSec : SERVO_SPEED_DEFAULT_DPS);
+  servoCommandDps = v;
+  try { localStorage.setItem(SERVO_SPEED_KEY, String(v)); } catch(e) {}
+  return servoCommandDps;
+}
+
+function getServoCommandSpeed() {
+  return servoCommandDps;
+}
 
 // Rango FÍSICO TOTAL de cada articulación (servos MG995 de 180°).
 // El movimiento operativo es simétrico ± la mitad de este total.
 const PHYSICAL_TOTAL = {
   base: 180,
   sho:   90,
-  elb:   45,
+  elb:   90,
   wri:  180,
-  grip:  60,
+  grip:  50,
 };
 
-// Mitad del rango total — usado como ± límite operativo.
+// Alcance máximo por articulación. Hombro y codo son rangos desplazados:
+// trabajan de 0° a 90° en vez de partir el recorrido a ambos lados del cero.
 const PHYSICAL_LIMITS = {
   base: PHYSICAL_TOTAL.base / 2,   // 90
-  sho:  PHYSICAL_TOTAL.sho  / 2,   // 45
-  elb:  PHYSICAL_TOTAL.elb  / 2,   // 22.5
+  sho:  PHYSICAL_TOTAL.sho,        // 90
+  elb:  PHYSICAL_TOTAL.elb,        // 90
   wri:  PHYSICAL_TOTAL.wri  / 2,   // 90
-  grip: PHYSICAL_TOTAL.grip / 2,   // 30
+  grip: PHYSICAL_TOTAL.grip / 2,   // 25
+};
+
+const PHYSICAL_MIN = {
+  base: -PHYSICAL_LIMITS.base,
+  sho:  0,
+  elb:  -PHYSICAL_LIMITS.elb,
+  wri:  -PHYSICAL_LIMITS.wri,
+  grip: -PHYSICAL_LIMITS.grip,
+};
+
+const PHYSICAL_MAX = {
+  base: PHYSICAL_LIMITS.base,
+  sho:  PHYSICAL_LIMITS.sho,
+  elb:  0,
+  wri:  PHYSICAL_LIMITS.wri,
+  grip: PHYSICAL_LIMITS.grip,
 };
 
 // Topes extra cuando la cámara está activa (± grados respecto al 0 lógico).
 const VISION_ACTIVE_LIMITS = {
-  sho: 45,
+  sho: PHYSICAL_LIMITS.sho,
 };
 
 const JDEFS = [
-  { key:'base', min:-PHYSICAL_LIMITS.base, max: PHYSICAL_LIMITS.base, def:0, lbl:'BASE',   angLim: PHYSICAL_LIMITS.base, total: PHYSICAL_TOTAL.base },
-  { key:'sho',  min:-PHYSICAL_LIMITS.sho,  max: PHYSICAL_LIMITS.sho,  def:0, lbl:'HOMBRO', angLim: PHYSICAL_LIMITS.sho,  total: PHYSICAL_TOTAL.sho  },
-  { key:'elb',  min:-PHYSICAL_LIMITS.elb,  max: PHYSICAL_LIMITS.elb,  def:0, lbl:'CODO',   angLim: PHYSICAL_LIMITS.elb,  total: PHYSICAL_TOTAL.elb  },
-  { key:'wri',  min:-PHYSICAL_LIMITS.wri,  max: PHYSICAL_LIMITS.wri,  def:0, lbl:'MUÑECA', angLim: PHYSICAL_LIMITS.wri,  total: PHYSICAL_TOTAL.wri  },
-  { key:'grip', min:-PHYSICAL_LIMITS.grip, max: PHYSICAL_LIMITS.grip, def:0, lbl:'PINZA',  angLim: PHYSICAL_LIMITS.grip, total: PHYSICAL_TOTAL.grip },
+  { key:'base', min:PHYSICAL_MIN.base, max:PHYSICAL_MAX.base, def:0, lbl:'BASE',   angLim: PHYSICAL_LIMITS.base, total: PHYSICAL_TOTAL.base },
+  { key:'sho',  min:PHYSICAL_MIN.sho,  max:PHYSICAL_MAX.sho,  def:0, lbl:'HOMBRO', angLim: PHYSICAL_LIMITS.sho,  total: PHYSICAL_TOTAL.sho  },
+  { key:'elb',  min:PHYSICAL_MIN.elb,  max:PHYSICAL_MAX.elb,  def:0, lbl:'CODO',   angLim: PHYSICAL_LIMITS.elb,  total: PHYSICAL_TOTAL.elb  },
+  { key:'wri',  min:PHYSICAL_MIN.wri,  max:PHYSICAL_MAX.wri,  def:0, lbl:'MUÑECA', angLim: PHYSICAL_LIMITS.wri,  total: PHYSICAL_TOTAL.wri  },
+  { key:'grip', min:PHYSICAL_MIN.grip, max:PHYSICAL_MAX.grip, def:0, lbl:'PINZA',  angLim: PHYSICAL_LIMITS.grip, total: PHYSICAL_TOTAL.grip },
 ];
 
 /* ──────────────────────────────────────────────────────────────
@@ -68,7 +140,9 @@ JDEFS.forEach(d => {
     home:     d.def,    // HOME persistible (referencia de inicio)
     calMin:   d.min,    // Límite inferior calibrado (restricción del usuario)
     calMax:   d.max,    // Límite superior calibrado (restricción del usuario)
-    angLim:   d.angLim, // ± límite físico (no se debe sobrepasar nunca)
+    minLim:   d.min,    // Límite físico inferior real
+    maxLim:   d.max,    // Límite físico superior real
+    angLim:   d.angLim, // Alcance máximo usado por visualización y límites de visión
     zero:     0,        // OFFSET de cero (grados) — para alinear el "0 mecánico" del servo
                         //   con el "0 lógico" de la página tras montar el brazo.
   };
@@ -87,17 +161,17 @@ const lerp  = (a, b, t) => a + (b - a) * t;
    LÍMITES Y SNAPPING
    ────────────────────────────────────────────────────────────── */
 function jointMin(key) {
-  const baseMin = Math.max(-J[key].angLim, J[key].calMin);
+  const baseMin = Math.max(J[key].minLim, J[key].calMin);
   const visionCap = window.__camOn ? VISION_ACTIVE_LIMITS[key] : null;
   if (typeof visionCap !== 'number') return baseMin;
-  return Math.max(baseMin, -Math.min(J[key].angLim, Math.abs(visionCap)));
+  return Math.max(baseMin, J[key].minLim);
 }
 
 function jointMax(key) {
-  const baseMax = Math.min(J[key].angLim, J[key].calMax);
+  const baseMax = Math.min(J[key].maxLim, J[key].calMax);
   const visionCap = window.__camOn ? VISION_ACTIVE_LIMITS[key] : null;
   if (typeof visionCap !== 'number') return baseMax;
-  return Math.min(baseMax, Math.min(J[key].angLim, Math.abs(visionCap)));
+  return Math.min(baseMax, Math.min(J[key].maxLim, Math.abs(visionCap)));
 }
 
 function clampJointDeg(key, deg) {
@@ -155,27 +229,56 @@ function moveToHomePose() {
 
 /* ──────────────────────────────────────────────────────────────
    COMMIT / REFRESCO
-   Con servos de POSICIÓN no necesitamos un ciclo de pulsos: el
-   target se refleja inmediatamente en angPos y la UI se refresca.
+   target = lo que pide la UI/visión.
+   angPos = posición comandada al firmware, limitada por grados/segundo.
    El envío real al firmware lo gestiona arduino.js (sendPos).
    ────────────────────────────────────────────────────────────── */
 let _rafPending = false;
+let _lastMotionTs = 0;
+
+function _stepServoCommand(dtSec) {
+  let moving = false;
+  JDEFS.forEach(d => {
+    const j = J[d.key];
+    const target = clampJointDeg(d.key, j.target);
+    const current = clampJointDeg(d.key, j.angPos);
+    const delta = target - current;
+
+    if (Math.abs(delta) <= 0.01) {
+      j.target = target;
+      j.angPos = target;
+      return;
+    }
+
+    const scale = (SERVO_JOINT_SPEED_SCALE[d.key] ?? 1) *
+      (window.__camOn ? VISION_SERVO_SPEED_MULTIPLIER : 1);
+    const maxStep = Math.max(0.001, servoCommandDps * scale * dtSec);
+    j.angPos = current + clamp(delta, -maxStep, maxStep);
+    moving = true;
+  });
+  return moving;
+}
 
 function _scheduleUI() {
   if (_rafPending) return;
   _rafPending = true;
-  requestAnimationFrame(() => {
+  requestAnimationFrame(ts => {
     _rafPending = false;
+    const dtSec = _lastMotionTs
+      ? clamp((ts - _lastMotionTs) / 1000, 1 / 120, 0.08)
+      : 1 / 60;
+    _lastMotionTs = ts;
+    const moving = _stepServoCommand(dtSec);
     if (typeof applyArm === 'function') applyArm();
     refreshUI();
+    if (moving) _scheduleUI();
   });
 }
 
-// Asigna directamente la posición y dispara refresco visual.
+// Asigna el objetivo y dispara el seguimiento suavizado.
 function _setJointTargetRaw(key, deg) {
   if (!J[key]) return;
   J[key].target = snapTargetDeg(key, deg);
-  J[key].angPos = J[key].target;   // posición = objetivo (servo de ángulo)
   _scheduleUI();
 }
 
@@ -196,20 +299,21 @@ function setJointTarget(key, deg) {
 
 /** Mover un delta angular desde la posición actual. */
 function moveDegrees(key, degrees) {
-  if (!J[key] || !Math.abs(degrees)) return;
-  setJointTarget(key, J[key].target + snapDeltaDeg(degrees));
+  if (!J[key] || !isFinite(degrees) || !Math.abs(degrees)) return false;
+  if (Math.abs(J[key].target - J[key].angPos) > 0.02) return false;
+  const delta = snapDeltaDeg(degrees, MANUAL_STEP_DEG);
+  const base = clampJointDeg(key, J[key].angPos);
+  const next = snapTargetDeg(key, base + delta, ANGLE_STEP_DEG);
+  if (Math.abs(next - J[key].target) < 1e-6 && Math.abs(next - J[key].angPos) < 0.05) return false;
+  setJointTarget(key, next);
+  return true;
 }
 
 /** Movimiento manual por pasos — encolado simplificado.
  *  Con servos de posición no hace falta cola: simplemente
  *  ajustamos el target. Se mantiene la firma para compatibilidad. */
 function queueManualMove(key, degrees) {
-  if (!J[key] || !Math.abs(degrees)) return false;
-  const delta = snapDeltaDeg(degrees, MANUAL_STEP_DEG);
-  const next  = snapTargetDeg(key, J[key].target + delta, MANUAL_STEP_DEG);
-  if (Math.abs(next - J[key].target) < 1e-6) return false;
-  setJointTarget(key, next);
-  return true;
+  return moveDegrees(key, degrees);
 }
 
 function cancelQueuedMoves(/* key, opts */) { /* no-op con servos de posición */ }
@@ -246,7 +350,7 @@ function batchJoints(targets) {
 const _uiCache = {};
 
 function _fmtDeg(v) {
-  // Codo permite 22.5° → mostramos 1 decimal sólo cuando es necesario.
+  // Algunos límites usan fracciones de grado; mostramos decimal sólo si hace falta.
   return Math.abs(v - Math.round(v)) < 0.05 ? `${Math.round(v)}°` : `${v.toFixed(1)}°`;
 }
 

@@ -4,9 +4,9 @@
    Servos MG995 Hi-SPEED de 180° controlados por POSICIÓN angular.
 
    PROTOCOLO:
-     TX → Arduino: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0\n"
+     TX → Arduino: "B:90.0,H:90.0,C:90.0,W:-90.0,G:15.0\n"
        (ángulos en GRADOS, signo respecto al cero calibrado)
-     RX ← Arduino: "OK B:90 H:45 C:-22 W:-90 G:30\n" | "PONG" | "READY"
+     RX ← Arduino: "OK B:90 H:90 C:90 W:-90 G:15\n" | "PONG" | "READY"
 
    COMANDOS especiales:
      PING            → PONG
@@ -41,11 +41,11 @@ try {
 
 /* Meta-info por servo (para firmware y telemetría) */
 const SERVO_META = {
-  base: { label:'Base',   varName:'CH_BASE',     min:-PHYSICAL_LIMITS.base, max:PHYSICAL_LIMITS.base, range:totalRangeLabel(PHYSICAL_TOTAL.base) },
-  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:-PHYSICAL_LIMITS.sho,  max:PHYSICAL_LIMITS.sho,  range:totalRangeLabel(PHYSICAL_TOTAL.sho)  },
-  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:-PHYSICAL_LIMITS.elb,  max:PHYSICAL_LIMITS.elb,  range:totalRangeLabel(PHYSICAL_TOTAL.elb)  },
-  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:-PHYSICAL_LIMITS.wri,  max:PHYSICAL_LIMITS.wri,  range:totalRangeLabel(PHYSICAL_TOTAL.wri)  },
-  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:-PHYSICAL_LIMITS.grip, max:PHYSICAL_LIMITS.grip, range:totalRangeLabel(PHYSICAL_TOTAL.grip) },
+  base: { label:'Base',   varName:'CH_BASE',     min:PHYSICAL_MIN.base, max:PHYSICAL_MAX.base, range:totalRangeLabel(PHYSICAL_TOTAL.base) },
+  sho:  { label:'Hombro', varName:'CH_SHOULDER', min:PHYSICAL_MIN.sho,  max:PHYSICAL_MAX.sho,  range:totalRangeLabel(PHYSICAL_TOTAL.sho)  },
+  elb:  { label:'Codo',   varName:'CH_ELBOW',    min:PHYSICAL_MIN.elb,  max:PHYSICAL_MAX.elb,  range:totalRangeLabel(PHYSICAL_TOTAL.elb)  },
+  wri:  { label:'Muñeca', varName:'CH_WRIST',    min:PHYSICAL_MIN.wri,  max:PHYSICAL_MAX.wri,  range:totalRangeLabel(PHYSICAL_TOTAL.wri)  },
+  grip: { label:'Pinza',  varName:'CH_GRIPPER',  min:PHYSICAL_MIN.grip, max:PHYSICAL_MAX.grip, range:totalRangeLabel(PHYSICAL_TOTAL.grip) },
 };
 
 
@@ -105,13 +105,17 @@ function angleToPwm(key, deg) {
   return clamp(v, PULSE_HARD_MIN, PULSE_HARD_MAX);
 }
 
+function formatLimitDeg(deg) {
+  return String(Math.round(deg * 100) / 100);
+}
+
 /** Envía los límites angulares calibrados al firmware (clamp duro). */
 function sendCalibLimits() {
   if (!writer) return;
   const order = ['base','sho','elb','wri','grip'];
   const parts = [];
   order.forEach(k => {
-    parts.push(Math.round(jointMin(k)), Math.round(jointMax(k)));
+    parts.push(formatLimitDeg(jointMin(k)), formatLimitDeg(jointMax(k)));
   });
   return sendRaw(`LIM:${parts.join(',')}`);
 }
@@ -131,8 +135,8 @@ function generateFirmware() {
     .map(k => `#define ${SERVO_META[k].varName.padEnd(13)} ${chanMap[k]}`)
     .join('\n');
 
-  const limMin = JDEFS.map(d => Math.round(jointMin(d.key))).join(', ');
-  const limMax = JDEFS.map(d => Math.round(jointMax(d.key))).join(', ');
+  const limMin = JDEFS.map(d => formatLimitDeg(jointMin(d.key))).join(', ');
+  const limMax = JDEFS.map(d => formatLimitDeg(jointMax(d.key))).join(', ');
 
   return `// ═══════════════════════════════════════════
 //  RoboArm IPN — Firmware v5.1  (POSICIÓN · MG995 Hi-SPEED 180°)
@@ -159,8 +163,8 @@ function generateFirmware() {
 //  CANALES PCA9685 (configurados desde la web):
 ${chanComment}
 //
-//  Protocolo RX: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0\\n" (grados)
-//  Protocolo TX: "OK B:90 H:45 C:-22 W:-90 G:30\\n"
+//  Protocolo RX: "B:90.0,H:90.0,C:90.0,W:-90.0,G:15.0\\n" (grados)
+//  Protocolo TX: "OK B:90 H:90 C:90 W:-90 G:15\\n"
 //
 //  Comandos especiales:
 //    PING                  → PONG
@@ -199,8 +203,8 @@ const uint8_t CH_IDX[5] = { CH_BASE, CH_SHOULDER, CH_ELBOW, CH_WRIST, CH_GRIPPER
 uint16_t zeroPwm[5] = { ${neutrals.base}, ${neutrals.sho}, ${neutrals.elb}, ${neutrals.wri}, ${neutrals.grip} };
 
 // Límites angulares por servo (en GRADOS, ya restringidos a la calibración del usuario)
-int8_t  limMin[5] = { ${limMin} };
-int8_t  limMax[5] = { ${limMax} };
+float limMin[5] = { ${limMin} };
+float limMax[5] = { ${limMax} };
 
 // Última posición conocida (en GRADOS) por servo.
 // Cada servo MG995 mantiene esta posición mientras la PCA9685 emita
@@ -221,8 +225,8 @@ String buf = "";
 unsigned long _lastAtPos = 0;
 
 uint16_t angleToPwm(uint8_t i, float deg) {
-  if (deg < (float)limMin[i]) deg = (float)limMin[i];
-  if (deg > (float)limMax[i]) deg = (float)limMax[i];
+  if (deg < limMin[i]) deg = limMin[i];
+  if (deg > limMax[i]) deg = limMax[i];
   long delta = (long)(deg * (float)PWM_PER_DEG_X100 / 100.0f);
   long v = (long)zeroPwm[i] + delta;
   if (v < PULSE_HARD_MIN) v = PULSE_HARD_MIN;
@@ -304,8 +308,6 @@ void parseCmd(String cmd) {
       if (v >= PULSE_HARD_MIN && v <= PULSE_HARD_MAX) zeroPwm[idx] = (uint16_t)v;
       s2 = cm + 1; idx++;
     }
-    armOutputs();
-    writeAll();
     Serial.print("OK Z");
     for (uint8_t i = 0; i < 5; i++) { Serial.print(' '); Serial.print(zeroPwm[i]); }
     Serial.println();
@@ -318,20 +320,18 @@ void parseCmd(String cmd) {
     int idx = 0, s2 = 0;
     while (s2 < (int)body.length() && idx < 10) {
       int cm = body.indexOf(',', s2); if (cm < 0) cm = body.length();
-      long v = body.substring(s2, cm).toInt();
+      float v = body.substring(s2, cm).toFloat();
       if (v >= -127 && v <= 127) {
-        if ((idx & 1) == 0) limMin[idx >> 1] = (int8_t)v;
-        else                limMax[idx >> 1] = (int8_t)v;
+        if ((idx & 1) == 0) limMin[idx >> 1] = v;
+        else                limMax[idx >> 1] = v;
       }
       s2 = cm + 1; idx++;
     }
     Serial.println("OK LIM");
-    armOutputs();
-    writeAll();
     return;
   }
 
-  // Posiciones angulares: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0"
+  // Posiciones angulares: "B:90.0,H:90.0,C:90.0,W:-90.0,G:15.0"
   // Si el firmware está en PARO (frozen), descartamos por completo.
   if (frozen) {
     Serial.println("BLOCKED frozen");
@@ -477,7 +477,7 @@ function resetChannels() {
    COMUNICACIÓN SERIAL
    ══════════════════════════════════════════════ */
 let port=null, writer=null, reader=null;
-let serialHz=20, serialT=null;
+let serialHz=30, serialT=null;
 let pktCount=0, lastTxMs=0;
 let _pendingPort=null;
 let _readyTimer=null;
@@ -596,14 +596,14 @@ async function autoConnectPort(serialPort, opts = false) {
   }
 }
 
-/** Construye comando de POSICIÓN: "B:90.0,H:45.0,C:-22.5,W:-90.0,G:30.0" */
+/** Construye comando de POSICIÓN suavizada: "B:90.0,H:90.0,C:90.0,W:-90.0,G:15.0" */
 function buildCmd() {
   return [
-    `B:${clampJointDeg('base', J.base.target).toFixed(1)}`,
-    `H:${clampJointDeg('sho',  J.sho.target ).toFixed(1)}`,
-    `C:${clampJointDeg('elb',  J.elb.target ).toFixed(1)}`,
-    `W:${clampJointDeg('wri',  J.wri.target ).toFixed(1)}`,
-    `G:${clampJointDeg('grip', J.grip.target).toFixed(1)}`,
+    `B:${clampJointDeg('base', J.base.angPos).toFixed(2)}`,
+    `H:${clampJointDeg('sho',  J.sho.angPos ).toFixed(2)}`,
+    `C:${clampJointDeg('elb',  J.elb.angPos ).toFixed(2)}`,
+    `W:${clampJointDeg('wri',  J.wri.angPos ).toFixed(2)}`,
+    `G:${clampJointDeg('grip', J.grip.angPos).toFixed(2)}`,
   ].join(',');
 }
 
@@ -779,19 +779,16 @@ async function ensureSafeIdle(source = 'serial') {
         await waitSerialLine(line => line.startsWith('OK LIM'), 350);
       } catch {}
 
-      try {
-        await sendRaw('HOME');
-        await waitSerialLine(line => line.startsWith('OK HOME'), 350);
-      } catch {}
-
       await _sleepMs(120);
     }
 
-    if (typeof resetAngPos === 'function') resetAngPos();
-    _lastSentCmd = buildCmd();
+    const poseCmd = buildCmd();
+    try { await sendRaw(poseCmd); } catch {}
+    _lastSentCmd = poseCmd;
+    _lastSendMs = performance.now();
     startNeuRefresh();
     serialT = setInterval(sendPos, Math.round(1000 / serialHz));
-    log(`Reposo seguro aplicado (${source})`, 'info');
+    log(`Sincronización aplicada sin volver a HOME (${source})`, 'info');
   })().finally(() => {
     _idleSyncInFlight = null;
   });
@@ -799,7 +796,7 @@ async function ensureSafeIdle(source = 'serial') {
   return _idleSyncInFlight;
 }
 
-const MIN_TX_MS = 50;
+const MIN_TX_MS = 25;
 
 // PARO DE EMERGENCIA — flag global del lado de la página.
 // Mientras esté activo, sendPos() NO transmite ningún comando de
@@ -1118,20 +1115,39 @@ function renderPresets() {
 renderPresets();
 
 
-/* ── Sweep de servo (prueba de rango) ────────────────────────── */
-function sweepServo(key) {
-  if (!writer) { log('Conecta primero el serial','err'); return; }
+/* ── Recorrido completo de servo dentro de límites calibrados ─── */
+const activeSweeps = new Set();
+
+async function waitJointNear(key, target) {
+  while (activeSweeps.has(key) && !window.__emergencyStop) {
+    if (Math.abs(J[key].angPos - target) <= 0.2) return true;
+    await _sleepMs(80);
+  }
+  return false;
+}
+
+async function sweepServo(key) {
+  if (!J[key] || window.__emergencyStop) return;
+  if (activeSweeps.has(key)) {
+    activeSweeps.delete(key);
+    setJointTarget(key, J[key].angPos);
+    log(`${key}: recorrido detenido`, 'info');
+    return;
+  }
+
   const mn = jointMin(key);
   const mx = jointMax(key);
-  let i = 0, steps = 10;
-  const iv = setInterval(() => {
-    const v = i < steps ? lerp(mn, mx, i / steps) : lerp(mx, mn, (i - steps) / steps);
-    setJointTarget(key, v);
-    if (++i > steps * 2) {
-      clearInterval(iv);
-      setJointTarget(key, (mn + mx) / 2);
-    }
-  }, 200);
+  activeSweeps.add(key);
+  log(`${key}: recorrido completo ${mn}° → ${mx}°`, 'info');
+
+  try {
+    setJointTarget(key, mn);
+    if (!(await waitJointNear(key, mn))) return;
+    setJointTarget(key, mx);
+    await waitJointNear(key, mx);
+  } finally {
+    activeSweeps.delete(key);
+  }
 }
 
 
@@ -1437,6 +1453,24 @@ if (_hzSl) _hzSl.addEventListener('input', function() {
   document.getElementById('lv-hz').textContent = serialHz + ' Hz';
   if (serialT) { clearInterval(serialT); serialT=setInterval(sendPos, Math.round(1000/serialHz)); }
 });
+
+// Velocidad de comando: rampa angular antes de enviar al firmware.
+const _servoSpeedSl = document.getElementById('sl-servo-speed');
+const _servoSpeedLbl = document.getElementById('lv-servo-speed');
+if (_servoSpeedSl && typeof getServoCommandSpeed === 'function' && typeof setServoCommandSpeed === 'function') {
+  const fmtSpeed = v => {
+    const n = Number(v);
+    return (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1)) + '°/s';
+  };
+  const current = getServoCommandSpeed();
+  _servoSpeedSl.value = String(current);
+  if (_servoSpeedLbl) _servoSpeedLbl.textContent = fmtSpeed(current);
+  _servoSpeedSl.addEventListener('input', function() {
+    const v = setServoCommandSpeed(parseFloat(this.value));
+    this.value = String(v);
+    if (_servoSpeedLbl) _servoSpeedLbl.textContent = fmtSpeed(v);
+  });
+}
 
 // Auto-inicio
 const _autoChk = document.getElementById('chk-autostart');
