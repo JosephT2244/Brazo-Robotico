@@ -244,55 +244,92 @@ function gear(parent, x, y, z, radius, thickness, teeth, toothDepth, toothWidth,
   return g;
 }
 
+// Engranaje acostado sobre la pinza: eje vertical (+Y), como el CAD.
+function flatGear(parent, x, y, z, radius, thickness, teeth, toothDepth, toothWidth, mat) {
+  const g = group(parent, x, y, z);
+  const disc = cyl(radius, radius, thickness, teeth, mat || MAT.gear);
+  g.add(disc);
+
+  for (let i = 0; i < teeth; i++) {
+    const a = i / teeth * Math.PI * 2;
+    const tooth = box(toothWidth, thickness, toothDepth * 0.72, mat || MAT.gear);
+    tooth.position.set(
+      Math.cos(a) * (radius + toothDepth * 0.24),
+      0,
+      Math.sin(a) * (radius + toothDepth * 0.24)
+    );
+    tooth.rotation.y = -a;
+    g.add(tooth);
+  }
+
+  const ring = trs(Math.max(radius - toothDepth * 1.05, 0.02), toothDepth * 0.14, MAT.slvd, 8, 36);
+  ring.rotation.x = Math.PI / 2;
+  g.add(ring);
+
+  const hub = cyl(radius * 0.22, radius * 0.22, thickness + 0.012, 16, MAT.chr);
+  g.add(hub);
+  return g;
+}
+
+function plateXZ(points, thickness, mat) {
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
+  shape.closePath();
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
+  geo.rotateX(Math.PI / 2);
+  geo.translate(0, thickness / 2, 0);
+  return mk(geo, mat);
+}
+
+function linkBar(parent, x1, z1, x2, z2, y, width, height, mat) {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const len = Math.max(0.001, Math.hypot(dx, dz));
+  const bar = box(width, height, len, mat);
+  bar.position.set((x1 + x2) / 2, y, (z1 + z2) / 2);
+  bar.rotation.y = Math.atan2(dx, dz);
+  parent.add(bar);
+  return bar;
+}
+
+function pinCap(parent, x, y, z, r) {
+  place(parent, cyl(r, r, 0.034, 18, MAT.slv), x, y, z);
+  place(parent, cyl(r * 0.48, r * 0.48, 0.038, 14, MAT.chr), x, y + 0.002, z);
+}
+
 // Cada garra se construye espejada usando side = ±1.
 function jaw(parent, side) {
-  const g = group(parent, side * 0.185, -0.038, 0.055);
+  const g = group(parent, side * 0.100, 0.004, 0.135);
 
-  place(g, box(0.052, 0.120, 0.118, MAT.slvd), 0, 0, 0.030);
+  linkBar(g, 0.000, 0.000, side * 0.030, 0.265,  0.052, 0.030, 0.034, MAT.slv);
+  linkBar(g, -side * 0.054, 0.026, -side * 0.035, 0.292, -0.034, 0.030, 0.034, MAT.slvd);
 
-  const upperLink = box(0.038, 0.028, 0.265, MAT.slv);
-  upperLink.position.set(0, 0.094, 0.175);
-  upperLink.rotation.y = -side * 0.18;
-  g.add(upperLink);
+  const jawPlate = plateXZ([
+    [-side * 0.052, 0.260],
+    [-side * 0.096, 0.390],
+    [-side * 0.052, 0.610],
+    [ side * 0.026, 0.620],
+    [ side * 0.094, 0.455],
+    [ side * 0.064, 0.305],
+  ], 0.040, MAT.slv);
+  jawPlate.position.y = -0.002;
+  g.add(jawPlate);
 
-  const lowerLink = box(0.038, 0.028, 0.245, MAT.slv);
-  lowerLink.position.set(0, 0.010, 0.165);
-  lowerLink.rotation.y = -side * 0.08;
-  g.add(lowerLink);
+  const webCut = plateXZ([
+    [-side * 0.050, 0.390],
+    [ side * 0.020, 0.500],
+    [ side * 0.050, 0.380],
+  ], 0.012, MAT.chr);
+  webCut.position.y = -0.026;
+  g.add(webCut);
 
-  const crank = box(0.032, 0.026, 0.175, MAT.slvd);
-  crank.position.set(side * 0.018, 0.060, 0.118);
-  crank.rotation.y = -side * 0.56;
-  g.add(crank);
+  place(g, box(0.020, 0.076, 0.154, MAT.rub), -side * 0.046, -0.006, 0.552);
 
-  const jawBody = box(0.060, 0.112, 0.315, MAT.slv);
-  jawBody.position.set(0, -0.002, 0.350);
-  jawBody.rotation.y = -side * 0.14;
-  g.add(jawBody);
-
-  const finger = box(0.038, 0.092, 0.188, MAT.slvd);
-  finger.position.set(-side * 0.028, -0.012, 0.565);
-  finger.rotation.y = -side * 0.48;
-  g.add(finger);
-
-  const tip = box(0.020, 0.074, 0.118, MAT.slvd);
-  tip.position.set(-side * 0.078, -0.016, 0.695);
-  tip.rotation.y = -side * 0.86;
-  g.add(tip);
-
-  place(g, box(0.018, 0.086, 0.155, MAT.rub), -side * 0.034, -0.020, 0.610, 0, -side * 0.62, 0);
-
-  [
-    [0, 0.098, 0.120, 0.026],
-    [0, 0.010, 0.140, 0.024],
-    [0, -0.002, 0.345, 0.032],
-    [-side * 0.028, -0.012, 0.548, 0.024],
-  ].forEach(([hx, hy, hz, rr]) => {
-    const hole = cyl(rr, rr, 0.036, 14, MAT.chr);
-    hole.rotation.x = Math.PI / 2;
-    hole.position.set(hx, hy, hz);
-    g.add(hole);
-  });
+  pinCap(g, 0.000,  0.062, 0.000, 0.030);
+  pinCap(g, -side * 0.054, -0.024, 0.026, 0.028);
+  pinCap(g, side * 0.030,  0.060, 0.265, 0.030);
+  pinCap(g, -side * 0.035, -0.026, 0.292, 0.028);
 
   return g;
 }
@@ -301,18 +338,19 @@ function jaw(parent, side) {
    BASE ESTÁTICA
    ══════════════════════════════════ ══════════ */
 
-const lowerPlate = roundedPlate(scene, 3.04, 0.082, 3.04, 0.18, MAT.red, 0, 0.041, 0);
-const upperPlate = roundedPlate(scene, 2.86, 0.078, 2.86, 0.16, MAT.red, 0, 0.220, 0);
+const lowerPlate = roundedPlate(scene, 2.14, 0.082, 2.14, 0.14, MAT.red, 0, 0.041, 0);
+const upperPlate = roundedPlate(scene, 1.96, 0.078, 1.96, 0.12, MAT.red, 0, 0.220, 0);
 // La placa superior del CAD tiene un cuadro central abierto donde se aloja
 // el servo de la base. Modelamos ese marco con cuatro tiras finas en lugar
 // de la chapa interior maciza.
 const upperOpening = 0.640;            // lado del hueco central
-const upperRim     = (2.62 - upperOpening) / 2;
+const upperOuter   = 1.74;
+const upperRim     = (upperOuter - upperOpening) / 2;
 [
   [ 0,  (upperOpening + upperRim) / 2],
   [ 0, -(upperOpening + upperRim) / 2],
 ].forEach(([x, z]) => {
-  place(upperPlate, box(2.62, 0.016, upperRim, MAT.rdx), x, 0.046, z);
+  place(upperPlate, box(upperOuter, 0.016, upperRim, MAT.rdx), x, 0.046, z);
 });
 [
   [ (upperOpening + upperRim) / 2, 0],
@@ -324,27 +362,27 @@ const upperRim     = (2.62 - upperOpening) / 2;
 [
   [-1, -1], [1, -1], [1, 1], [-1, 1]
 ].forEach(([sx, sz]) => {
-  const x = sx * 1.08;
-  const z = sz * 1.08;
-  addHole(scene, x, 0.042, z, 0.102, 0.090);
-  addHole(scene, x, 0.220, z, 0.102, 0.086);
+  const x = sx * 0.72;
+  const z = sz * 0.72;
+  addHole(scene, x, 0.042, z, 0.074, 0.090);
+  addHole(scene, x, 0.220, z, 0.074, 0.086);
   [
-    [0.165, 0],
-    [-0.165, 0],
-    [0, 0.165]
+    [0.112, 0],
+    [-0.112, 0],
+    [0, 0.112]
   ].forEach(([dx, dz]) => {
-    addHole(scene, x + dx, 0.220, z + dz, 0.030, 0.090);
+    addHole(scene, x + dx, 0.220, z + dz, 0.022, 0.090);
   });
 });
 
 // Postes cilíndricos rojos entre las dos placas de la base (igual que el CAD).
 [
-  [-1.08, -1.08], [1.08, -1.08], [1.08, 1.08], [-1.08, 1.08]
+  [-0.72, -0.72], [0.72, -0.72], [0.72, 0.72], [-0.72, 0.72]
 ].forEach(([x, z]) => {
-  place(scene, cyl(0.085, 0.085, 0.180, 18, MAT.red), x, 0.131, z);
+  place(scene, cyl(0.062, 0.062, 0.180, 18, MAT.red), x, 0.131, z);
   // Tornillos cromados visibles en el extremo de cada poste
-  place(scene, cyl(0.022, 0.022, 0.030, 12, MAT.chr), x, 0.232, z);
-  place(scene, cyl(0.022, 0.022, 0.030, 12, MAT.chr), x, 0.030, z);
+  place(scene, cyl(0.018, 0.018, 0.030, 12, MAT.chr), x, 0.232, z);
+  place(scene, cyl(0.018, 0.018, 0.030, 12, MAT.chr), x, 0.030, z);
 });
 
 place(scene, cyl(0.088, 0.088, 0.268, 18, MAT.chr), 0, 0.135, 0);
@@ -432,6 +470,9 @@ shoG.add(shoBear);
 
 const UPPER_LEN = 1.12;
 const UPPER_ANG = 0.82;
+// Offsets visuales: en 0° lógico el brazo debe apuntar hacia arriba.
+const SHO_ZERO_ROT_X = -UPPER_ANG;
+const ELB_ZERO_ROT_X = UPPER_ANG - Math.PI / 2;
 const elbY = Math.cos(UPPER_ANG) * UPPER_LEN;
 const elbZ = Math.sin(UPPER_ANG) * UPPER_LEN;
 
@@ -479,18 +520,7 @@ const FRAME_T = 0.066;
 
 const arm2 = openFrame(elbG, 0, 0.090, 0.150, FRAME_W, FRAME_H, FRAME_L, FRAME_T, MAT.red, MAT.rdx);
 
-servo(arm2, 0.040, FRAME_H/2 + 0.342, 0.140);
 servo(arm2, 0.138, 0.000, FRAME_L - 0.220, 0, 0, -Math.PI/2);
-
-// Soporte diagonal trasero (presente en el CAD de referencia, conecta el
-// codo con la parte inferior del marco). Se omite el "midBrace" intermedio
-// porque ensucia la silueta del bastidor abierto.
-[-1, 1].forEach(side => {
-  const backBrace = box(0.052, 0.250, 0.052, MAT.red);
-  backBrace.position.set(side * 0.185, -FRAME_H/2 - 0.040, 0.402);
-  backBrace.rotation.x = -0.62;
-  arm2.add(backBrace);
-});
 
 /* ─── Articulación muñeca ───────────────────────────────── */
 const wriP = group(arm2, 0, 0.010, FRAME_L);
@@ -512,34 +542,23 @@ wristCollar.rotation.x = Math.PI / 2;
 wristCollar.position.set(0, 0.030, 0.000);
 wriG.add(wristCollar);
 
-const bigGear = gear(wriG, -0.115, 0.090, 0, 0.154, 0.052, 24, 0.038, 0.028, MAT.gear);
-const smallGear = gear(wriG, 0.148, 0.090, 0, 0.108, 0.046, 16, 0.030, 0.020, MAT.gear);
-
-[
-  [-0.115, 0.090, 0.032],
-  [0.148, 0.090, 0.026]
-].forEach(([x, y, r]) => {
-  const axle = cyl(r, r, 0.076, 14, MAT.chr);
-  axle.rotation.x = Math.PI / 2;
-  axle.position.set(x, y, 0);
-  wriG.add(axle);
-});
-
 /* ══════════════════════════════════ ══════════════
    PINZA — gripR  (CH0 / J.grip)
    Pinza lateral con doble engrane y bielas visibles
    ══════════════════════════════════ ══════════ */
 const gripR = group(wriG, 0.004, -0.020, 0.180);
+gripR.scale.set(1.18, 1.18, 1.18);
 
 // Cuerpo trasero rojo de la pinza (en el CAD es el bloque donde se monta
 //  el servo de la garra). Sólo las garras móviles y los engranajes quedan
 //  en aluminio.
-place(gripR, box(0.300, 0.060, 0.092, MAT.red),  0, 0.082, 0.012);
-place(gripR, box(0.188, 0.104, 0.142, MAT.red),  0, 0.018, 0.032);
-// Placa cromada superior — eje central donde gira el engranaje grande.
-place(gripR, box(0.390, 0.018, 0.024, MAT.chr),  0, 0.084, 0.010);
-// Refuerzo plateado del soporte de las garras (tapa aluminizada del CAD)
-place(gripR, box(0.214, 0.026, 0.058, MAT.slvd), 0, 0.030, 0.110);
+place(gripR, box(0.360, 0.205, 0.250, MAT.red),  0.000, -0.010, 0.030);
+place(gripR, box(0.290, 0.082, 0.210, MAT.sbk),  0.000, -0.154, 0.020);
+place(gripR, box(0.070, 0.250, 0.055, MAT.rdx),  0.000,  0.012, 0.172);
+place(gripR, box(0.372, 0.026, 0.054, MAT.slvd), 0.000, 0.108, 0.166);
+
+const bigGear = flatGear(gripR, -0.078, 0.132, 0.176, 0.070, 0.026, 20, 0.016, 0.014, MAT.gear);
+const smallGear = flatGear(gripR, 0.074, 0.088, 0.176, 0.058, 0.024, 18, 0.014, 0.012, MAT.gear);
 
 const jaw1 = jaw(gripR, -1);
 const jaw2 = jaw(gripR,  1);
@@ -553,9 +572,9 @@ const jaw2 = jaw(gripR,  1);
 
    Unidades: J[].angPos en GRADOS (±angLim). _va en RADIANES para rotar
    los Groups de Three.js directamente. grip es un caso aparte:
-   _va.grip es "apertura visual" en radianes (≈0 cerrado, ≈0.34 abierto),
-   derivada linealmente de J.grip.angPos (±angLim). */
-const _va = { base: 0, sho: 0, elb: 0, wri: 0, grip: 0.16 };
+   _va.grip es apertura visual centrada: con J.grip.angPos = 0 las
+   garras quedan verticales en el modelo, sin cambiar la senal fisica. */
+const _va = { base: 0, sho: 0, elb: 0, wri: 0, grip: 0 };
 let _vaT  = performance.now();
 
 /* Constante del resorte: fracción de la distancia que cerramos por segundo.
@@ -569,9 +588,9 @@ function _targetRad(key) {
   return toRad(clamp(J[key].angPos, -J[key].angLim, J[key].angLim));
 }
 function _targetGrip() {
-  // Normaliza angPos ±angLim a apertura visual 0.04..0.34
-  const t = (J.grip.angPos + J.grip.angLim) / (2 * J.grip.angLim); // 0..1
-  return 0.04 + clamp(t, 0, 1) * 0.30;
+  // Normaliza angPos ±angLim a apertura visual centrada en 0°.
+  const t = J.grip.angPos / J.grip.angLim; // -1..1
+  return t >= 0 ? clamp(t, 0, 1) * 0.24 : clamp(t, -1, 0) * 0.08;
 }
 
 // Interpola suavemente el estado visual hacia el ángulo real estimado.
@@ -591,22 +610,22 @@ function _tickVA() {
 // Aplica el estado visual calculado a cada group jerárquico del brazo.
 function _applyVA() {
   baseG.rotation.y = _va.base;
-  shoG.rotation.x  = _va.sho;
-  elbG.rotation.x  = _va.elb;
+  shoG.rotation.x  = SHO_ZERO_ROT_X + _va.sho;
+  elbG.rotation.x  = ELB_ZERO_ROT_X - _va.elb;
   wriG.rotation.z  = _va.wri;
-  bigGear.rotation.z   =  _va.grip * 1.9;
-  smallGear.rotation.z = -_va.grip * 2.7;
-  jaw1.rotation.z =  _va.grip;
-  jaw2.rotation.z = -_va.grip;
+  bigGear.rotation.y   =  _va.grip * 1.9;
+  smallGear.rotation.y = -_va.grip * 2.7;
+  jaw1.rotation.y = -_va.grip;
+  jaw2.rotation.y =  _va.grip;
 }
 
 function applyArm() { _tickVA(); _applyVA(); }
 
 /* ─── Órbita de cámara suavizada ───────────────────────── */
 let _drag = false, _lx = 0, _ly = 0;
-let _th = 0.72, _ph = 0.40, _r = 9.6;
+let _th = 0.72, _ph = 0.40, _r = 12.4;
 let _tx = 0.72, _ty = 0.40;
-const lookTgt = new THREE.Vector3(0, 1.30, 1.10);
+const lookTgt = new THREE.Vector3(0, 2.05, 0.65);
 
 c3.addEventListener('mousedown',  e => { _drag=true; _lx=e.clientX; _ly=e.clientY; });
 document.addEventListener('mouseup',    () => _drag = false);
